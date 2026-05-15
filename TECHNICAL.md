@@ -1,7 +1,7 @@
 # Güvenli Kimlik Doğrulama Protokolü — Teknik Spesifikasyon
 
 **Hazırlayan:** Güven ACAR — İzmir, 2026  
-**Kaynak:** https://github.com/guvenacar  
+**Kaynak:** https://github.com/guvenacar/GKDP-Guvenli-Kimlik-Dogrulama-Protokolu  
 **Versiyon:** 0.1-draft
 
 ---
