@@ -2,7 +2,7 @@
 
 **Hazırlayan:** Güven ACAR — İzmir, 2026  
 **Kaynak:** https://github.com/guvenacar/GKDP-Guvenli-Kimlik-Dogrulama-Protokolu  
-**Versiyon:** 0.2-draft
+**Versiyon:** 0.3-draft
 
 ---
 
@@ -50,6 +50,7 @@ session_id    ← SHAKE-256(ePub || nonce || timestamp, 32)
 
 - Her platform kendi anahtar çiftini üretir ve P_pub'ı kamuya açık şekilde yayımlar.
 - Oturum şifrelemesinde kullanıcı P_pub ile kapsülleme yapar; platform P_priv ile açar.
+- Platform kimliği (platform_id), BTK tarafından kayıt altına alınır ve her platforma özel bir sertifika verilir. Token doğrulaması sırasında platform, kendi kimliğini bu sertifika ile kanıtlar.
 
 ### 2.4 BTK Anahtar Çifti
 
@@ -82,18 +83,19 @@ Kullanıcı sisteme ilk kez dahil olurken gerçekleşir. eDevlet yalnızca bu a�
    kayit_talebi = {uPub, TC_kimlik, zaman_damgasi}
    imzali_talep = Dilithium3.Sign(uPriv, SHA3-256(kayit_talebi))
 
-3. eDevlet TC kimliğini doğrular:
-   eDevlet_kaydi = {TC_kimlik ↔ uPub}  // eDevlet'te saklanır
+3. eDevlet TC kimliğini doğrular ve eşleştirmeyi kendi veritabanında saklar:
+   eDevlet_kaydi = {TC_kimlik ↔ uPub}  // eDevlet'te saklanır, dışarı çıkmaz
 
-4. eDevlet kullanıcıya sertifika yayımlar:
-   sertifika = Dilithium3.Sign(eDev_priv, SHA3-256(uPub || TC_kimlik))
+4. eDevlet yalnızca uPub'ı imzalayarak sertifika yayımlar:
+   sertifika = Dilithium3.Sign(eDev_priv, SHA3-256(uPub))
+   // TC_kimlik sertifikaya girmez — eDevlet'te kalır
    // Sertifika kullanıcı cihazında saklanır
 ```
 
 **Bu aşamadan sonra:**
-- eDevlet: TC_kimlik ↔ uPub ilişkisini ve sertifikayı bilir.
-- BTK: bu ilişkiyi bilmez.
-- Üçüncü taraflar: bu ilişkiyi bilmez.
+- eDevlet: TC_kimlik ↔ uPub ilişkisini bilir.
+- BTK: yalnızca uPub'ı eDevlet'in onayladığını bilir. TC_kimlik'i bilmez.
+- Üçüncü taraflar: hiçbir şey bilmez.
 - **eDevlet runtime işlemlerine dahil olmaz.**
 
 ---
@@ -127,8 +129,8 @@ BTK, kullanıcının TC kimliğini görmez. eDevlet'e runtime'da sorgu gönderme
 
 ```
 // 1. Sertifikayı doğrular → uPub, eDevlet tarafından onaylanmış mı?
-Dilithium3.Verify(eDev_pub, SHA3-256(uPub || TC_kimlik), sertifika)
-// Not: BTK burada TC_kimlik'i görmez — sertifika içinde hash olarak kilitlidir
+//    TC_kimlik sertifikada yoktur — BTK yalnızca uPub'ın geçerliliğini doğrular
+Dilithium3.Verify(eDev_pub, SHA3-256(uPub), sertifika)
 
 // 2. u_imza → "e_imza, uPriv sahibinden geldi"
 Dilithium3.Verify(uPub, SHA3-256(e_imza), u_imza)
@@ -137,6 +139,8 @@ Dilithium3.Verify(uPub, SHA3-256(e_imza), u_imza)
 Dilithium3.Verify(ePub, SHA3-256(islem), e_imza)
 
 // 4. CRL kontrolü — uPub iptal edilmiş mi?
+//    BTK, CRL'yi önbelleğe alır ve periyodik olarak günceller (örn. her 5 dakika)
+//    Token üretimi önbellek üzerinden kontrol yapılarak gerçekleştirilir
 assert uPub not in CRL
 
 // 5. BTK onay token'ı üretir ve imzalar
@@ -249,7 +253,7 @@ assert uPub not in CRL
 ```
 
 - eDevlet, iptal listesini (CRL) yönetir.
-- BTK, token üretmeden önce uPub'ın CRL'de olup olmadığını kontrol eder.
+- BTK, CRL'yi önbelleğe alır ve periyodik olarak günceller — token üretimi önbellek üzerinden gerçekleşir, her işlemde ağ sorgusu yapılmaz.
 - İptal edilen uPub ile üretilmiş önceki token'lar geçersiz sayılır.
 - Kullanıcı yeni bir uPriv/uPub çifti üreterek yeniden kayıt yaptırabilir.
 
@@ -260,11 +264,13 @@ assert uPub not in CRL
 uPriv ve ePriv yalnızca TEE (Trusted Execution Environment) içinde üretilir ve işlenir. İşletim sistemi dahil hiçbir yazılım katmanı bu anahtarlara erişemez.
 
 **Desteklenen TEE implementasyonları:**
-- ARM TrustZone (mobil cihazlar)
+- ARM TrustZone (mobil cihazlar) — en yaygın ve önerilen
 - Intel TDX / SGX (masaüstü ve sunucu)
 - AMD SEV (sunucu)
 
 **TEE yoksa:** Protokol çalışmaz. Yazılımsal izolasyon, uPriv güvenliği için yeterli kabul edilmez. Protokol "TEE zorunludur" olarak tanımlar.
+
+> **Not:** PC ortamında Intel SGX birçok sistemde devre dışıdır veya kısıtlıdır. AMD SEV ise ağırlıklı olarak sunucu ortamlarına yöneliktir. Bu nedenle GKDP, öncelikli hedef platform olarak ARM TrustZone tabanlı mobil cihazları esas alır. PC desteği, TEE standardizasyonunun olgunlaşmasıyla birlikte genişleyecektir.
 
 ---
 
@@ -274,7 +280,7 @@ uPriv ve ePriv yalnızca TEE (Trusted Execution Environment) içinde üretilir v
 Her işlem bağımsız bir ephemeral anahtar çifti kullanır. Geçmiş oturumlar, ePriv silindiğinden geriye dönük olarak çözülemez.
 
 ### Kimlik Bağlantısızlığı (Unlinkability)
-Her session_id bağımsız türetilir. Farklı platformlardaki işlemler kriptografik olarak birbirine bağlanamaz — ne BTK tarafından, ne de platformlar tarafından. Not: uPub sabit olduğundan sistem düzeyinde korelasyon teorik olarak mümkündür; bu risk CRL sorgulamaları minimize edilerek azaltılır.
+Her session_id bağımsız türetilir. Farklı platformlardaki işlemler kriptografik olarak birbirine bağlanamaz — ne BTK tarafından, ne de platformlar tarafından. Not: uPub sabit olduğundan sistem düzeyinde korelasyon teorik olarak mümkündür; bu risk CRL önbellekleme stratejisi ile minimize edilir.
 
 ### Kuantum Direnci
 Tüm imzalama ve anahtar kapsülleme işlemleri kafes tabanlı (lattice-based) algoritmalar kullanır. RSA ve ECDH tabanlı sistemlere karşı Shor algoritmasıyla gerçekleştirilebilecek kuantum saldırıları bu protokole uygulanamaz.
