@@ -1,7 +1,7 @@
 # Güvenli Kimlik Doğrulama Protokolü
 
 **Hazırlayan:** Güven ACAR — İzmir, 2026  
-**Kaynak:** https://github.com/guvenacar  
+**Kaynak:** https://github.com/guvenacar/GKDP-Guvenli-Kimlik-Dogrulama-Protokolu 
 
 ---
 
@@ -131,4 +131,4 @@ Amaç basit:
 ---
 
 *Teknik detaylar ve kriptografik spesifikasyon için teknik belgeye bakınız.*  
-*https://github.com/guvenacar*
+*https://github.com/guvenacar/GKDP-Guvenli-Kimlik-Dogrulama-Protokolu/TECHNICAL.md*
