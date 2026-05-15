@@ -219,4 +219,4 @@ uPriv ve ePriv yalnızca TEE içinde işlenir. İşletim sistemi dahil hiçbir y
 ---
 
 *Politika yapıcılara yönelik genel belge için README.md dosyasına bakınız.*  
-*https://github.com/guvenacar/README.md*
+*https://github.com/guvenacar/blob/main/README.md*
