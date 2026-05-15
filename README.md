@@ -27,6 +27,8 @@ Bu protokol bu ayrımı teknik bir garanti hâline getiriyor.
 
 ---
 
+![GKDP Diyagramı](assets/diyagram_1.png)
+
 ## Nasıl Çalışır?
 
 ### Temel Bileşenler
