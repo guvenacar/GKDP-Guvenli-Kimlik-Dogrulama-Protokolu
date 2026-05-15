@@ -131,4 +131,4 @@ Amaç basit:
 ---
 
 *Teknik detaylar ve kriptografik spesifikasyon için teknik belgeye bakınız.*  
-*https://github.com/guvenacar/GKDP-Guvenli-Kimlik-Dogrulama-Protokolu/blob/main/TECHNICAL.md*
+*https://github.com/guvenacar/GKDP-Guvenli-Kimlik-Dogrulama-Protokolu/blob/main/GUVENLI_KIMLIK_DOGRULAMA_PROTOKOLU_TEKNIK.md*

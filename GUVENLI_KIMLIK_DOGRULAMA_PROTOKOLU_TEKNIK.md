@@ -89,7 +89,7 @@ Kullanıcı sisteme ilk kez dahil olurken gerçekleşir.
 
 ## 4. İşlem Aşaması
 
-### 4.1 Ephemeral Anahtar Üretimi ve İmzalama
+### 4.1 Ephemeral Anahtar Üretimi ve Sertifikalandırma
 
 ```
 // TEE içinde gerçekleşir
@@ -97,21 +97,29 @@ Kullanıcı sisteme ilk kez dahil olurken gerçekleşir.
 nonce         ← SHAKE-256(random_seed, 32)
 session_id    ← SHAKE-256(ePub || nonce || timestamp, 32)
 
-// Kullanıcı ephemeral anahtarı uPriv ile imzalar
-talep_paketi  = {ePub, session_id, hedef_platform, timestamp}
-u_imza        = Dilithium3.Sign(uPriv, SHA3-256(talep_paketi))
+// uPriv, ePub'ı imzalar → ePriv'in yalnızca bu kullanıcı tarafından üretildiğini kanıtlar
+ePub_sertifika = Dilithium3.Sign(uPriv, SHA3-256(ePub || session_id || timestamp))
+
+// talep_paketi ePriv ile imzalanır → forward secrecy sağlanır
+talep_paketi  = {ePub, ePub_sertifika, session_id, hedef_platform, timestamp}
+u_imza        = Dilithium3.Sign(ePriv, SHA3-256(talep_paketi))
 
 // BTK'ya gönderilir
 btk_girdisi   = {talep_paketi, u_imza}
 ```
+
+**Tasarım kararı:** Talebi imzalayan ePriv'dir, uPriv değil. Bu sayede ePriv çalınsa bile geçmiş ve gelecekteki oturumlar tehlikeye girmez (forward secrecy). Ancak ePriv'in yalnızca uPriv sahibi tarafından üretilebileceği garantisi, `ePub_sertifika` ile kriptografik olarak sağlanır.
 
 ### 4.2 BTK Doğrulama ve Kör İmzalama
 
 BTK, kullanıcının TC kimliğini görmez. Yalnızca şunları yapar:
 
 ```
-// 1. Kullanıcı imzasını uPub ile doğrular
-gecerli = Dilithium3.Verify(uPub, SHA3-256(talep_paketi), u_imza)
+// 1. ePub_sertifikayı doğrular → bu ePub'ın uPriv sahibi tarafından üretildiğini kanıtlar
+Dilithium3.Verify(uPub, SHA3-256(ePub || session_id || timestamp), ePub_sertifika)
+
+// 2. Talebin ePriv tarafından imzalandığını doğrular
+gecerli = Dilithium3.Verify(ePub, SHA3-256(talep_paketi), u_imza)
 
 // 2. eDevlet'e soru sorar: "Bu uPub'a ait kullanıcı geçerli mi?"
 edev_sorgu   = {uPub, session_id}
