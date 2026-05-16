@@ -119,14 +119,14 @@ platform_istegi = {
     hedef_platform,    // "facebook.com"
     firma_istegi,      // "kullanici_gercek_mi"
     timestamp,
-    nonce
+    nonce*
 }
 ```
 
 #### Adım 2 — İzole alan BTK'ya iletir
 
 ```
-talep_imzasi = Dilithium3.Sign(uPriv, SHA3-256(uPub || hedef_platform || timestamp || nonce))
+talep_imzasi = Dilithium3.Sign(uPriv, SHA3-256(uPub || hedef_platform || timestamp || nonce*))
 
 btk_istegi = {
     eDevlet_sertifikasi,    // eDevlet'in imzaladığı, içinde uPub olan belge
@@ -134,7 +134,7 @@ btk_istegi = {
     hedef_platform,
     firma_istegi,
     timestamp,
-    nonce
+    nonce*
 }
 ```
 
@@ -148,7 +148,7 @@ uPub ← extract(eDevlet_sertifikasi)
 Dilithium3.Verify(eDev_pub, SHA3-256(uPub), eDevlet_sertifikasi)
 
 // 3. Talebi gerçekten uPub sahibi mi imzaladı?
-Dilithium3.Verify(uPub, SHA3-256(uPub || hedef_platform || timestamp || nonce), talep_imzasi)
+Dilithium3.Verify(uPub, SHA3-256(uPub || hedef_platform || timestamp || nonce*), talep_imzasi)
 
 // 4. CRL kontrolü — uPub iptal edilmiş mi?
 assert uPub not in CRL
@@ -279,3 +279,9 @@ eDevlet yalnızca kayıt ve iptal aşamalarında devrededir. Runtime işlemlerin
 
 *Politika yapıcılara yönelik genel belge için README.md dosyasına bakınız.*  
 *https://github.com/guvenacar/GKDP-Guvenli-Kimlik-Dogrulama-Protokolu/blob/main/README.md*
+
+---
+
+**Dipnotlar**
+
+*\*nonce: TEE'nin donanımsal rastgele sayı üreticisinden (TRNG) elde edilen, tek kullanımlık 32 baytlık değer. Her istekte sıfırdan üretilir, bir daha kullanılmaz.*
