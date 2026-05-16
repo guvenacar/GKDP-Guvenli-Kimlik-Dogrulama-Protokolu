@@ -2,7 +2,7 @@
 
 **Hazırlayan:** Güven ACAR — İzmir, 2026  
 **Kaynak:** https://github.com/guvenacar/GKDP-Guvenli-Kimlik-Dogrulama-Protokolu  
-**Versiyon:** 0.4-draft
+**Versiyon:** 0.5-draft
 
 ---
 
@@ -58,6 +58,19 @@ Bu protokol yalnızca NIST onaylı, kuantum dirençli algoritmalar kullanır.
 
 - Kayıt aşamasında kullanıcı sertifikalarını imzalamak için kullanılır.
 - eDev_pub, BTK tarafından bilinir.
+
+---
+
+### 3.0. Fiziksel Güven Başlangıcı (Trust-on-First-Use)
+
+uPriv/uPub ilk kez üretildiğinde, bu anahtar çiftinin **gerçek kullanıcıya ait olduğu** eDevlet tarafından doğrulanmalıdır.
+
+Bu nedenle kayıt işlemi, **fiziksel bir güven ortamında** başlatılır:
+
+- **Önerilen yöntem:** Kullanıcı, bir PTT şubesine veya nüfus müdürlüğüne gider. Görevli, kimlik kartını okutur ve kullanıcının cihazında TEE tarafından üretilen uPub'ı (ekranda gösterilen) sisteme onaylar. eDevlet, bu onayla birlikte `TC_kimlik ↔ uPub` eşlemesini kaydeder.
+- **Alternatif (uzaktan):** eDevlet'in güvenli mobil uygulaması, yüz tanıma ve biyometrik doğrulama ile kullanıcının kimliğini onaylar. Uygulama, TEE içinde üretilen uPub'ı doğrudan eDevlet'e iletir. Bu yöntem, cihazın TEE'sinin (TrustZone) güvenli olduğu varsayımına dayanır.
+
+**Bu adım olmadan, bir saldırgan rastgele uPub üretip başkasının TC'siyle kaydedemez.**
 
 ---
 
