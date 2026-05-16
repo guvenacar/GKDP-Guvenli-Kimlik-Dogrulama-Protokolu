@@ -230,12 +230,14 @@ nonce_cache.add(ePub, nonce)
 ##### Adım 4 — BTK token üretir
 
 ```
-// Token ham gövdesi
+// Token ham gövdesi (imzalanacak tüm alanlar)
 token_ham = {
     firma_id,
     seviye: "yesil",
     gecerli: true,
-    timestamp
+    ePub,
+    timestamp,
+    nonce
 }
 
 // BTK imzası ile bağlama
@@ -248,7 +250,9 @@ token_hash = SHA3-256(token_ham || btk_imza)
 btk_kayit = {token_hash, ePub, uPubHash, firma_id, timestamp}
 
 // Token paketlenir ve firmanın açık anahtarı ile şifrelenir
-token_paket = {token_hash, token_ham, btk_imza, ePub, timestamp, BTK_pub, nonce}
+// ePub, timestamp, nonce zaten token_ham içinde — tekrar taşınmaz
+// uPubHash firmanın BTK imzasını doğrulayabilmesi için eklenir
+token_paket = {token_hash, token_ham, btk_imza, BTK_pub, uPubHash}
 sifreli_token = Kyber768.Encapsulate(F_pub, token_paket)
 ```
 
@@ -292,7 +296,9 @@ Adım 1: Mahkeme, X.com'dan sifreli_token'ı resmi yazı ile talep eder.
         Firma token'ı mahkemeye iletmekle yükümlüdür.
 
 Adım 2: Mahkeme, sifreli_token'ı BTK'ya götürür.
-        BTK, kendi kaydından token_hash ile eşleşen ePub → uPubHash'i bulur.
+        BTK, token_hash ile kendi kayıtlarında arama yapar:
+          btk_kayit = lookup(token_hash)
+          // btk_kayit = {token_hash, ePub, uPubHash, firma_id, timestamp}
         uPubHash'i mahkemeye resmi yazı ile bildirir.
 
 Adım 3: Mahkeme, uPubHash ile DOĞRUDAN eDevlet'e başvurur.
@@ -306,7 +312,7 @@ Adım 4: eDevlet, TC kimliğini yalnızca mahkemeye bildirir.
 
 #### 5.1.5. Çift Taraflı Kayıt Güvencesi (eDevlet Runtime Bağımsız)
 
-BTK, her token için `btk_kayit` tutar. Gün sonunda (veya belirli aralıklarla) tüm kayıtların **Merkle ağaç kök hash'ini** eDevlet'e gönderir:
+BTK, her token için `btk_kayit` tutar. **Günde bir kez veya her 1000 token'da bir (hangi önce gelirse)** tüm kayıtların **Merkle ağaç kök hash'ini** eDevlet'e gönderir:
 
 ```
 gunluk_merkle_kok = MerkleRoot(tum_token_hash'ler)
