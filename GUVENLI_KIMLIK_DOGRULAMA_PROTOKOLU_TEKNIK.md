@@ -2,7 +2,7 @@
 
 **Hazırlayan:** Güven ACAR — İzmir, 2026  
 **Kaynak:** https://github.com/guvenacar/GKDP-Guvenli-Kimlik-Dogrulama-Protokolu  
-**Versiyon:** 0.5-draft
+**Versiyon:** 0.6-draft
 
 ---
 
@@ -13,10 +13,11 @@ Bu protokol yalnızca NIST onaylı, kuantum dirençli algoritmalar kullanır.
 | Kullanım Amacı | Algoritma | Standart |
 |---|---|---|
 | İmzalama | CRYSTALS-Dilithium (Dilithium3) | FIPS 204 |
+| Şifreleme / Kapsülleme | CRYSTALS-Kyber (Kyber-768) | FIPS 203 |
 | Hash | SHA-3 / SHAKE-256 | FIPS 202 |
-| Geçici anahtar türetme | HKDF-SHA3-256 | RFC 5869 |
+| Anahtar türetme | HKDF-SHA3-256 | RFC 5869 |
 
-> **Not:** Oturum şifrelemesi (CRYSTALS-Kyber / Kyber-768, FIPS 203) bu belgenin kapsamı dışındadır ve ayrı bir teknik belgede ele alınacaktır.
+> Kyber-768, NIST tarafından FIPS 203 ile standartlaştırılmış, kafes tabanlı (lattice-based) bir Anahtar Kapsülleme Mekanizmasıdır (KEM). Bu protokolde taraflar arası şifreli iletişim için kullanılır.
 
 ---
 
@@ -31,15 +32,17 @@ Bu protokol yalnızca NIST onaylı, kuantum dirençli algoritmalar kullanır.
 - **uPriv:** Kullanıcının kalıcı gizli anahtarı. Donanımsal güvenlik bölgesinde (TEE) üretilir ve saklanır. Cihazdan asla çıkmaz. Export edilemez.
 - **uPub:** Kullanıcının kalıcı açık anahtarı. Kayıt aşamasında eDevlet'e iletilir ve kullanıcı kimliğiyle ilişkilendirilir.
 
-### 2.2 ePriv / ePub — Ephemeral Anahtar Çifti
+### 2.2 ePriv / ePub — Ephemeral Oturum Anahtar Çifti
 
 ```
 (ePriv, ePub) ← Dilithium3.KeyGen()
 ```
 
-- Yalnızca Sarı seviye işlemlerde kullanılır (bkz. Bölüm 5.2).
-- Her işlem başlangıcında TEE içinde sıfırdan üretilir.
-- İşlem tamamlandığında TEE tarafından güvenli şekilde silinir (purge).
+- **ePub:** Oturumluk geçici açık anahtar. Her giriş oturumunda yenilenir. Kullanıcının "kimliksiz" oturum tanımlayıcısıdır.
+- **ePriv:** Oturumluk geçici gizli anahtar. TEE içinde kalır, asla dışarı çıkmaz.
+- **Yaşam döngüsü:** Oturum başlangıcında TEE tarafından üretilir, oturum sonunda güvenli şekilde silinir (purge).
+- **Kullanım seviyeleri:** Hem Yeşil (5.1) hem Sarı (5.2) seviyede kullanılır.
+- **Amaç:** Aynı kullanıcının farklı oturumlarını birbirine bağlamayı (korelasyon) engellemek. uPub sabit olduğu için oluşabilecek izlenebilirlik riskini ePub ortadan kaldırır — BTK her oturumda farklı ePub görür.
 
 ### 2.3 BTK Anahtar Çifti
 
@@ -58,6 +61,28 @@ Bu protokol yalnızca NIST onaylı, kuantum dirençli algoritmalar kullanır.
 
 - Kayıt aşamasında kullanıcı sertifikalarını imzalamak için kullanılır.
 - eDev_pub, BTK tarafından bilinir.
+
+### 2.5 uPubHash — Kullanıcı Açık Anahtar Hash'i
+
+```
+uPubHash = SHA3-256(uPub)
+```
+
+- uPubHash, uPub'ın sabit uzunluklu (256 bit) temsilidir.
+- Kullanıcıyı tanımlamak için uPub yerine kullanılır — böylece uPub BTK ve firma tarafına iletilmez, sadece hash'i paylaşılır.
+- uPubHash, eDevlet ve BTK tarafından bilinir. TC kimliği ise sadece eDevlet bilir.
+- Aynı uPubHash, aynı kullanıcıya ait tüm oturumlarda sabittir.
+
+### 2.6 Firma Anahtar Çifti (Platform)
+
+```
+(F_priv, F_pub) ← Kyber768.KeyGen()
+```
+
+- Her platform (X.com, Facebook, banka vb.) kendi Kyber-768 anahtar çiftini üretir.
+- **F_pub:** Platformun açık anahtarı. BTK tarafından kayıt altına alınır ve token şifrelemede kullanılır.
+- **F_priv:** Platformun gizli anahtarı. Firmanın kendi sunucularında saklanır. BTK'dan gelen şifreli token'ı yalnızca F_priv ile açabilir.
+- **Amaç:** BTK'nın ürettiği token'ın yalnızca hedef platform tarafından okunabilmesini sağlamak.
 
 ---
 
@@ -80,23 +105,25 @@ Kullanıcı sisteme ilk kez dahil olurken gerçekleşir. eDevlet yalnızca bu a�
 
 ```
 1. TEE içinde uPriv/uPub üretilir.
+   uPubHash = SHA3-256(uPub)  // TEE içinde hesaplanır
 
 2. Kullanıcı eDevlet'e başvurur:
-   kayit_talebi = {uPub, TC_kimlik, timestamp}
+   kayit_talebi = {uPub, uPubHash, TC_kimlik, timestamp}
    imzali_talep = Dilithium3.Sign(uPriv, SHA3-256(kayit_talebi))
 
 3. eDevlet TC kimliğini doğrular ve eşleştirmeyi kendi veritabanında saklar:
-   eDevlet_kaydi = {TC_kimlik ↔ uPub}  // eDevlet'te saklanır, dışarı çıkmaz
+   eDevlet_kaydi = {TC_kimlik ↔ uPub ↔ uPubHash}  // eDevlet'te saklanır, dışarı çıkmaz
 
-4. eDevlet yalnızca uPub'ı imzalayarak sertifika yayımlar:
-   sertifika = Dilithium3.Sign(eDev_priv, SHA3-256(uPub))
+4. eDevlet yalnızca uPubHash'i imzalayarak sertifika yayımlar:
+   sertifika = Dilithium3.Sign(eDev_priv, SHA3-256(uPubHash))
    // TC_kimlik sertifikaya girmez — eDevlet'te kalır
-   // Sertifika kullanıcının izole alanında saklanır
+   // uPub da sertifikaya girmez — sadece uPubHash imzalanır
+   // Sertifika kullanıcının TEE'sinde saklanır
 ```
 
 **Bu aşamadan sonra:**
-- eDevlet: TC_kimlik ↔ uPub ilişkisini bilir.
-- BTK: yalnızca uPub'ı eDevlet'in onayladığını bilir. TC_kimlik'i bilmez.
+- eDevlet: TC_kimlik ↔ uPub ↔ uPubHash ilişkisini bilir.
+- BTK: yalnızca uPubHash'i eDevlet'in onayladığını bilir. uPub'ı ve TC_kimlik'i bilmez.
 - Üçüncü taraflar: hiçbir şey bilmez.
 - **eDevlet runtime işlemlerine dahil olmaz.**
 
@@ -108,9 +135,9 @@ Bu protokol imzalama gereksinimini şu kurala bağlar:
 
 > **İmzalanacak bir işlem içeriği yoksa imza mekanizması gereksizdir.**
 
-| Seviye | İşlem İçeriği | ePriv | Açıklama |
+| Seviye | İşlem İçeriği | ePub | Açıklama |
 |---|---|---|---|
-| Yeşil | Yok — sadece "gerçek mi?" sorusu | ❌ | uPriv ile talep imzası yeterli |
+| Yeşil | Yok — sadece "gerçek mi?" sorusu | ✅ | ePub oturum tanımlayıcı olarak kullanılır, korelasyonu engeller |
 | Sarı | Var — belirli bir işlem onayı | ✅ | Forward secrecy gerekli |
 | Kırmızı | Yok — doğrudan eDevlet kanalı | ❌ | BTK devre dışı |
 
@@ -121,71 +148,179 @@ Bu protokol imzalama gereksinimini şu kurala bağlar:
 ### 5.1 Yeşil Seviye — Sosyal Medya ve Genel Platformlar
 
 **Soru:** "Bu kullanıcı gerçek bir vatandaş mı?"  
-**ePriv kullanılmaz.** Talep uPriv ile imzalanır, sertifika kanıt olarak sunulur.
+**İşlem içeriği yoktur.** Her oturumda yeni ePub üretilir; korelasyon önlenir.
 
-#### Adım 1 — Platform isteği
+> **TEE Konumu:** TEE yalnızca kullanıcı cihazında bulunur. Firma sunucularında TEE zorunluluğu yoktur.
 
-Platform (örn. Facebook), kullanıcının izole alanına kimlik doğrulama isteği gönderir:
+#### 5.1.1. Nonce Kullanımı ve Replay Attack Önleme
+
+Nonce, TEE'nin donanımsal rastgele sayı üreticisinden (TRNG) elde edilen 16 baytlık tek kullanımlık değerdir:
+
+```
+nonce ← SHAKE-256(TRNG_random, 16)
+```
+
+Nonce şu saldırıları önler:
+- **Tekrar saldırısı (Replay attack):** Aynı `(ePub, timestamp, nonce)` kombinasyonu tekrar kullanılamaz.
+- **Zamanlama çakışması:** İki farklı oturum aynı timestamp'e sahip olsa bile nonce farklı olur.
+
+BTK, son N (varsayılan: 10.000) `(ePub, nonce)` çiftini geçici önbellekte tutar. Aynı nonce tekrar gelirse isteği reddeder.
+
+#### 5.1.2. İşlem Akışı
+
+##### Adım 1 — Platform kimlik doğrulama isteği gönderir
+
+Platform (örn. X.com), kullanıcının TEE'sine kimlik doğrulama isteği iletir:
 
 ```
 platform_istegi = {
-    hedef_platform,    // "facebook.com"
+    firma_id,          // "x.com"
     firma_istegi,      // "kullanici_gercek_mi"
     timestamp,
-    nonce*
+    nonce_p
 }
 ```
 
-#### Adım 2 — İzole alan BTK'ya iletir
+##### Adım 2 — TEE ePub üretir, talebi BTK'ya şifreli iletir
 
 ```
-talep_imzasi = Dilithium3.Sign(uPriv, SHA3-256(uPub || hedef_platform || timestamp || nonce*))
+// TEE içinde:
+(ePriv, ePub) ← Dilithium3.KeyGen()    // oturumluk anahtar çifti
+nonce ← SHAKE-256(TRNG_random, 16)
+uPubHash = SHA3-256(uPub)
 
-btk_istegi = {
-    eDevlet_sertifikasi,    // eDevlet'in imzaladığı, içinde uPub olan belge
-    talep_imzasi,           // uPriv ile imzalanmış talep
-    hedef_platform,
+// Talep oluşturulur
+talep = {
+    ePub,
+    uPubHash,
+    firma_id,
     firma_istegi,
     timestamp,
-    nonce*
+    nonce
 }
+
+// eDevlet sertifikası ile birlikte BTK'ya şifreli gönderilir
+paket = {eDevlet_sertifikasi, talep}
+sifreli_talep = Kyber768.Encapsulate(BTK_pub, paket)
 ```
 
-#### Adım 3 — BTK doğrular
+##### Adım 3 — BTK talebi açar ve doğrular
 
 ```
-// 1. Sertifikadan uPub'ı çıkar
-uPub ← extract(eDevlet_sertifikasi)
+// BTK tarafında:
+paket = Kyber768.Decapsulate(BTK_priv, sifreli_talep)
 
-// 2. Sertifika geçerli mi? (eDevlet imzası)
-Dilithium3.Verify(eDev_pub, SHA3-256(uPub), eDevlet_sertifikasi)
+// 1. Sertifikadan uPubHash'i çıkar ve eDevlet imzasını doğrula
+uPubHash ← extract(eDevlet_sertifikasi)
+Dilithium3.Verify(eDev_pub, SHA3-256(uPubHash), eDevlet_sertifikasi)
 
-// 3. Talebi gerçekten uPub sahibi mi imzaladı?
-Dilithium3.Verify(uPub, SHA3-256(uPub || hedef_platform || timestamp || nonce*), talep_imzasi)
+// 2. CRL kontrolü — uPubHash iptal edilmiş mi?
+assert uPubHash not in CRL
 
-// 4. CRL kontrolü — uPub iptal edilmiş mi?
-assert uPub not in CRL
+// 3. Nonce tekrar kontrolü
+assert (ePub, nonce) not in nonce_cache
 
-// 5. Firma isteği yetkili mi?
-//    Örn: firma TC kimliği talep ediyorsa → reddedilir
+// 4. Firma isteği yetkili mi?
 assert firma_istegi in izin_verilen_istekler
+
+// 5. Nonce'u önbelleğe al
+nonce_cache.add(ePub, nonce)
 ```
 
-#### Adım 4 — BTK token üretir ve izole alana gönderir
+##### Adım 4 — BTK token üretir
 
 ```
-token = {
-    hedef_platform,
+// Token ham gövdesi
+token_ham = {
+    firma_id,
     seviye: "yesil",
     gecerli: true,
     timestamp
 }
-btk_token = Dilithium3.Sign(BTK_priv, SHA3-256(token))
+
+// BTK imzası ile bağlama
+btk_imza = Dilithium3.Sign(BTK_priv, SHA3-256(uPubHash || timestamp))
+
+// Token hash'i (adli süreç için saklanır)
+token_hash = SHA3-256(token_ham || btk_imza)
+
+// BTK kendi kaydını tutar
+btk_kayit = {token_hash, ePub, uPubHash, firma_id, timestamp}
+
+// Token paketlenir ve firmanın açık anahtarı ile şifrelenir
+token_paket = {token_hash, token_ham, btk_imza, ePub, timestamp, BTK_pub, nonce}
+sifreli_token = Kyber768.Encapsulate(F_pub, token_paket)
 ```
 
-#### Adım 5 — İzole alan platformu bilgilendirir
+##### Adım 5 — BTK şifreli token'ı TEE'ye, TEE firmaya iletir
 
-Token geçerliyse platform girişe izin verir. TC kimliği hiçbir aşamada platforma iletilmez. Platform, kullanıcıyı kendi oturumuyla ilişkilendirmek için kendi ürettiği bir callback_token kullanır — BTK token içinde kullanıcıya ait hiçbir tanımlayıcı taşınmaz.
+```
+// TEE → Firma
+TEE, sifreli_token'i doğrudan firmaya iletir (değiştirmez, açmaz).
+```
+
+##### Adım 6 — Firma token'ı açar ve doğrular
+
+```
+// Firma tarafında:
+token_paket = Kyber768.Decapsulate(F_priv, sifreli_token)
+
+// 1. BTK imzasını doğrula
+Dilithium3.Verify(BTK_pub, SHA3-256(uPubHash || timestamp), btk_imza)
+
+// 2. Token hash'i tutarlı mı?
+assert token_hash == SHA3-256(token_ham || btk_imza)
+
+// 3. firma_id eşleşiyor mu?
+assert token_ham.firma_id == "x.com"
+
+// 4. Geçerliyse kullanıcıya giriş izni ver
+```
+
+Token geçerliyse platform girişe izin verir. TC kimliği hiçbir aşamada platforma iletilmez. Platform, kullanıcıyı kendi oturumuyla ilişkilendirmek için kendi ürettiği bir callback_token kullanır. Token içinde kullanıcıya ait tek tanımlayıcı `ePub`'tur — bu da bir sonraki oturumda değişir.
+
+#### 5.1.3. Token Yaşam Döngüsü
+
+- Firma `sifreli_token`'ı kendi veritabanında saklar (adli süreç için).
+- ePub oturum sonunda TEE tarafından silinir — geçmiş oturumlarla ilişkilendirilemez.
+- uPubHash sabittir ancak BTK tarafında ePub ile maskelenir.
+
+#### 5.1.4. Adli Süreç (Mahkeme Kararı ile Kimlik Tespiti)
+
+```
+Adım 1: Mahkeme, X.com'dan sifreli_token'ı resmi yazı ile talep eder.
+        Firma token'ı mahkemeye iletmekle yükümlüdür.
+
+Adım 2: Mahkeme, sifreli_token'ı BTK'ya götürür.
+        BTK, kendi kaydından token_hash ile eşleşen ePub → uPubHash'i bulur.
+        uPubHash'i mahkemeye resmi yazı ile bildirir.
+
+Adım 3: Mahkeme, uPubHash ile DOĞRUDAN eDevlet'e başvurur.
+        BTK bu adımda aracı değildir — manipülasyon riski ortadan kalkar.
+        eDevlet, kendi veritabanında uPubHash → TC_kimlik eşlemesini bulur.
+
+Adım 4: eDevlet, TC kimliğini yalnızca mahkemeye bildirir.
+```
+
+**Güvenlik garantisi:** Mahkeme hem BTK'dan hem eDevlet'ten bağımsız kayıt alır. İki kayıt uyuşmuyorsa manipülasyon tespit edilir.
+
+#### 5.1.5. Çift Taraflı Kayıt Güvencesi (eDevlet Runtime Bağımsız)
+
+BTK, her token için `btk_kayit` tutar. Gün sonunda (veya belirli aralıklarla) tüm kayıtların **Merkle ağaç kök hash'ini** eDevlet'e gönderir:
+
+```
+gunluk_merkle_kok = MerkleRoot(tum_token_hash'ler)
+BTK → eDevlet: {tarih, gunluk_merkle_kok}
+```
+
+**Mahkeme sürecinde çapraz doğrulama:**
+
+1. BTK, ilgili güne ait token kaydını ve Merkle kanıt yolunu (proof path) mahkemeye sunar.
+2. eDevlet, aynı güne ait Merkle kök hash'ini mahkemeye sunar.
+3. Mahkeme, Merkle kanıt yolunu kullanarak token kaydının kök hash ile uyuşup uyuşmadığını doğrular.
+4. Uyuşmazsa BTK kayıtları değiştirilmiş demektir — manipülasyon kanıtlanır.
+
+**eDevlet runtime'da devrede değildir** — yalnızca günlük batch Merkle kök hash'ini alır. Bu işlem eDevlet kesintisinden etkilenmez, gecikmeli olarak da yapılabilir.
 
 ---
 
@@ -231,7 +366,9 @@ CRL.add(uPub, timestamp)
 
 ## 7. TEE Gereksinimi
 
-uPriv ve ePriv yalnızca TEE (Trusted Execution Environment) içinde üretilir ve işlenir.
+uPriv, ePriv ve ePub yalnızca TEE (Trusted Execution Environment) içinde üretilir ve işlenir.
+
+**TEE yalnızca kullanıcı cihazında bulunur.** Firma sunucuları ve BTK altyapısı için TEE zorunluluğu yoktur. Protokol, sunucu tarafında standart donanım güvenliği varsayar.
 
 **Desteklenen implementasyonlar:**
 - ARM TrustZone (mobil cihazlar) — öncelikli hedef platform
@@ -247,22 +384,25 @@ uPriv ve ePriv yalnızca TEE (Trusted Execution Environment) içinde üretilir v
 ## 8. Güvenlik Özellikleri
 
 ### Forward Secrecy
-Sarı seviyede her işlem bağımsız bir ephemeral anahtar çifti kullanır. ePriv silindiğinden geçmiş oturumlar geriye dönük olarak çözülemez. Yeşil seviyede işlem içeriği olmadığından forward secrecy gerekmez.
+Sarı seviyede her işlem bağımsız bir ephemeral anahtar çifti kullanır. ePriv silindiğinden geçmiş oturumlar geriye dönük olarak çözülemez. Yeşil seviyede de ePub her oturumda yenilendiğinden oturumlar arası korelasyon mümkün değildir.
 
 ### Kimlik Bağlantısızlığı (Unlinkability)
-TC kimliği hiçbir zaman platforma iletilmez. Her token bağımsız nonce ve timestamp içerir. uPub sabit olduğundan sistem düzeyinde korelasyon teorik olarak mümkündür; bu risk CRL önbellekleme stratejisi ile minimize edilir.
+TC kimliği hiçbir zaman platforma veya BTK'ya iletilmez. Her oturumda yeni ePub üretilir — BTK aynı kullanıcının farklı oturumlarını birbirine bağlayamaz. uPubHash sabit olsa da ePub katmanı sayesinde oturum düzeyinde bağlantısızlık sağlanır.
 
 ### Kuantum Direnci
-Tüm imzalama işlemleri kafes tabanlı (lattice-based) Dilithium3 algoritması kullanır. RSA ve ECDH tabanlı sistemlere karşı Shor algoritmasıyla gerçekleştirilebilecek kuantum saldırıları bu protokole uygulanamaz.
+Tüm imzalama işlemleri kafes tabanlı Dilithium3, tüm şifreleme işlemleri kafes tabanlı Kyber-768 kullanır. RSA/ECDH tabanlı sistemlere karşı Shor algoritmasıyla gerçekleştirilebilecek kuantum saldırıları bu protokole uygulanamaz.
 
 ### Token Bağlama (Token Binding)
-Her token `hedef_platform` alanı ile belirli bir platforma bağlıdır. Token çalınsa bile başka bir platformda kullanılamaz.
+Her token `firma_id` alanı ile belirli bir platforma bağlıdır ve yalnızca o platformun `F_priv` anahtarı ile açılabilir. Token çalınsa bile başka bir platformda kullanılamaz.
 
 ### Yetkisiz Talep Reddi
-BTK, firma_istegi alanını denetler. Platform TC kimliği veya protokol kapsamı dışında bir bilgi talep ederse BTK isteği reddeder ve token üretmez.
+BTK, `firma_istegi` alanını denetler. Platform TC kimliği veya protokol kapsamı dışında bir bilgi talep ederse BTK isteği reddeder ve token üretmez.
 
 ### eDevlet Runtime Bağımsızlığı
-eDevlet yalnızca kayıt ve iptal aşamalarında devrededir. Runtime işlemlerinde eDevlet kesintisi sistemi etkilemez.
+eDevlet yalnızca kayıt, iptal ve günlük Merkle kök hash'i alma aşamalarında devrededir. Runtime işlemlerinde eDevlet kesintisi sistemi etkilemez. Merkle kök hash'i gecikmeli olarak da iletilebilir.
+
+### Çift Taraflı Kayıt Güvencesi
+BTK token kayıtlarını, eDevlet ise günlük Merkle kök hash'lerini bağımsız olarak tutar. Mahkeme her iki kaydı çapraz doğrular — tek tarafın manipülasyonu tespit edilebilir.
 
 ---
 
@@ -270,20 +410,24 @@ eDevlet yalnızca kayıt ve iptal aşamalarında devrededir. Runtime işlemlerin
 
 | Tehdit | Etki | Protokol Yanıtı |
 |---|---|---|
-| Platform ihlali | Saldırgan platform veritabanını ele geçirir | TC kimliği platformda yoktur — sızdırılacak veri yoktur |
-| BTK ihlali | BTK altyapısı tehlikeye girer | BTK'da TC kimliği yoktur — uPub listeleri açığa çıkabilir |
-| Token çalınması | Başka platformda kullanılmaya çalışılır | hedef_platform eşleşmediği için reddedilir |
+| Platform ihlali | Saldırgan platform veritabanını ele geçirir | TC kimliği ve uPub platformda yoktur — sadece ePub ve şifreli token vardır |
+| BTK ihlali | BTK altyapısı tehlikeye girer | BTK'da TC kimliği ve uPub yoktur — yalnızca uPubHash ve ePub listeleri açığa çıkabilir |
+| Token çalınması | Başka platformda kullanılmaya çalışılır | firma_id eşleşmediği ve F_priv olmadığı için açılamaz |
 | uPriv çalınması | Saldırgan kullanıcı adına işlem yapabilir | CRL ile iptal, yeni kayıt |
 | Yetkisiz firma talebi | Platform TC kimliği talep eder | BTK firma_istegi kontrolü ile reddeder |
-| Tekrar saldırısı (replay) | Eski token tekrar kullanılır | timestamp + nonce kombinasyonu tekrarı engeller |
-| Kuantum saldırısı | Gelecekte kuantum bilgisayar ile şifre çözme | Dilithium3 kuantum dirençlidir |
+| Tekrar saldırısı (replay) | Eski token tekrar kullanılır | nonce + ePub + timestamp kombinasyonu tekrarı engeller; BTK nonce cache'i |
+| Oturum korelasyonu | Aynı kullanıcının farklı oturumları izlenir | ePub her oturumda yenilenir, BTK oturumları bağlayamaz |
+| Kuantum saldırısı | Gelecekte kuantum bilgisayar ile şifre çözme | Dilithium3 + Kyber-768 kuantum dirençlidir |
 | eDevlet kesintisi | Runtime işlemler durur | eDevlet runtime'da devrede değildir — etki yok |
+| BTK kayıt manipülasyonu | BTK token kayıtlarını değiştirir | eDevlet'teki Merkle kök hash'i ile çapraz doğrulama yapılır |
+| Firma token silme | Firma adli süreçte token'ı gösteremez | BTK kendi token_hash kaydını tutar — firmadan bağımsız kanıt mevcuttur |
 
 ---
 
 ## 10. Referanslar
 
-- FIPS 204 — Module-Lattice-Based Digital Signature Standard (Dilithium)
+- FIPS 204 — Module-Lattice-Based Digital Signature Standard (CRYSTALS-Dilithium)
+- FIPS 203 — Module-Lattice-Based Key-Encapsulation Mechanism Standard (CRYSTALS-Kyber)
 - FIPS 202 — SHA-3 Standard: Permutation-Based Hash and Extendable-Output Functions
 - RFC 5869 — HMAC-based Extract-and-Expand Key Derivation Function (HKDF)
 - Chaum, D. (1982) — Blind Signatures for Untraceable Payments
@@ -297,4 +441,4 @@ eDevlet yalnızca kayıt ve iptal aşamalarında devrededir. Runtime işlemlerin
 
 **Dipnotlar**
 
-*\*nonce: TEE'nin donanımsal rastgele sayı üreticisinden (TRNG) elde edilen, tek kullanımlık 32 baytlık değer. Her istekte sıfırdan üretilir, bir daha kullanılmaz.*
+*nonce: TEE'nin donanımsal rastgele sayı üreticisinden (TRNG) türetilen, tek kullanımlık 16 baytlık değer (bkz. Bölüm 5.1.1). Her oturumda sıfırdan üretilir.*
