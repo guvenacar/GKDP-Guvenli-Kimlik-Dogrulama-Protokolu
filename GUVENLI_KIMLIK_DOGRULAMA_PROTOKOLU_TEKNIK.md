@@ -65,16 +65,17 @@ Bu protokol yalnızca NIST onaylı, kuantum dirençli algoritmalar kullanır.
 - Kayıt aşamasında kullanıcı sertifikalarını imzalamak için kullanılır.
 - eDev_pub, BTK tarafından bilinir.
 
-### 2.5 uPubHash — Kullanıcı Açık Anahtar Hash'i
+### 2.5 uPubHash_s — Oturumluk Şifreli Kullanıcı Tanımlayıcı
 
 ```
-uPubHash = SHA3-256(uPub)
+uPubHash_s = HybridEncrypt(eDev_pub, SHA3-256(uPub) || nonce)
 ```
 
-- uPubHash, uPub'ın sabit uzunluklu (256 bit) temsilidir.
-- Kullanıcıyı tanımlamak için uPub yerine kullanılır — uPub BTK'ya iletilmez.
-- uPubHash, eDevlet ve BTK tarafından bilinir. TC kimliği ise sadece eDevlet bilir.
-- Aynı uPubHash, aynı kullanıcıya ait tüm oturumlarda sabittir.
+- **HybridEncrypt:** Kyber-768 KEM ile paylaşımlı sır elde edilir, HKDF ile AES-256-GCM anahtarı türetilir, veri AES-256-GCM ile şifrelenir.
+- `uPubHash_s`, her oturumda farklı bir değer üretir — aynı `SHA3-256(uPub)` farklı `nonce` ile şifrelendiğinde farklı şifreli metin oluşur (IND-CPA).
+- BTK `uPubHash_s`'i açamaz — `eDev_priv` yalnızca eDevlet'tedir. Bu sayede BTK aynı kullanıcının farklı oturumlarını ilişkilendiremez.
+- **Adli süreçte:** eDevlet `uPubHash_s`'i `eDev_priv` ile açar, `SHA3-256(uPub)` değerini elde eder, indeks tablosundan `uPub` ve `TC_kimlik`'e ulaşır.
+- **eDevlet indeks tablosu:** Kayıt aşamasında oluşturulur: `SHA3-256(uPub) → uPub → TC_kimlik`. Kullanıcı başına bir kayıt (~85 milyon). Runtime'da sorgulanmaz.
 
 ### 2.6 Firma Anahtar Çifti (Platform)
 
@@ -168,7 +169,7 @@ Nonce şu saldırıları önler:
 
 BTK, son N (varsayılan: 10.000) `(ePub, nonce)` çiftini geçici önbellekte tutar. Aynı nonce tekrar gelirse isteği reddeder.
 
-> **Ölçek Notu:** Mevcut nonce cache modeli prototip ve orta ölçekli dağıtımlar için yeterlidir. Büyük ölçekli üretim ortamlarında, BTK'nın state tutmadığı **signed challenge** modeline geçilmesi önerilir. Bu optimizasyon ileri versiyonlarda ele alınacaktır.
+> **Ölçek Notu:** Her oturumda yeni bir `ePub` üretildiği için aynı `(ePub, nonce)` çiftinin tekrar kullanılması mümkün değildir. Bu nedenle nonce cache mekanizması yeterlidir; ayrı bir **signed challenge** modeline gerek yoktur.
 
 #### 5.1.2. İşlem Akışı
 
@@ -191,12 +192,15 @@ platform_istegi = {
 // TEE içinde:
 (ePriv, ePub) ← Dilithium3.KeyGen()    // oturumluk anahtar çifti
 nonce ← SHAKE-256(TRNG_random, 16)
-uPubHash = SHA3-256(uPub)
+
+// Oturumluk şifreli kullanıcı tanımlayıcı hesaplanır
+uPubHash_s = HybridEncrypt(eDev_pub, SHA3-256(uPub) || nonce)
+// HybridEncrypt = Kyber-768 KEM → HKDF → AES-256-GCM
 
 // Talep oluşturulur
 talep = {
     ePub,
-    uPubHash,
+    uPubHash_s,
     firma_id,
     firma_istegi,
     timestamp,
@@ -228,8 +232,9 @@ paket = AES-256-GCM-Decrypt(aes_key, sifreli_talep.ct)
 uPub ← extract(eDevlet_sertifikasi)
 Dilithium3.Verify(eDev_pub, SHA3-256(uPub), eDevlet_sertifikasi)
 
-// 2. uPubHash tutarlı mı?
-assert uPubHash == SHA3-256(uPub)
+// 2. uPubHash_s saklanır (BTK açamaz, yalnızca adli süreç için saklar)
+//    uPubHash_s = HybridEncrypt(eDev_pub, SHA3-256(uPub) || nonce)
+//    BTK, eDev_priv'e sahip olmadığı için içeriğini göremez
 
 // 3. u_imza'yı doğrula → e_imza bu kullanıcıya ait
 Dilithium3.Verify(uPub, SHA3-256(e_imza), u_imza)
@@ -267,13 +272,14 @@ token_ham = {
 btk_imza = Dilithium3.Sign(BTK_priv, SHA3-256(token_ham))
 
 // Token hash'i (adli süreç için saklanır)
-token_hash = SHA3-256(token_ham || btk_imza)
+// canonical_json: deterministik JSON serileştirme (anahtarlar alfabetik, boşluksuz)
+token_hash = SHA3-256(canonical_json(token_ham) || btk_imza)
 
 // BTK kendi kaydını tutar
-btk_kayit = {token_hash, ePub, uPubHash, firma_id, timestamp}
+btk_kayit = {token_hash, ePub, uPubHash_s, firma_id, timestamp}
 
 // Token paketlenir ve firmanın açık anahtarı ile şifrelenir
-token_paket = {token_hash, token_ham, btk_imza, BTK_pub}
+token_paket = {token_hash, token_ham, btk_imza}
 
 // Firma için KEM + AES-GCM şifreleme
 (ss_f, ct_f) ← Kyber768.Encapsulate(F_pub)
@@ -300,7 +306,7 @@ token_paket = AES-256-GCM-Decrypt(aes_key_f, sifreli_token.ct)
 Dilithium3.Verify(BTK_pub, SHA3-256(token_ham), btk_imza)
 
 // 2. Token hash'i tutarlı mı?
-assert token_hash == SHA3-256(token_ham || btk_imza)
+assert token_hash == SHA3-256(canonical_json(token_ham) || btk_imza)
 
 // 3. firma_id eşleşiyor mu?
 assert token_ham.firma_id == "x.com"
@@ -314,23 +320,26 @@ Token geçerliyse platform girişe izin verir. TC kimliği hiçbir aşamada plat
 
 - Firma `sifreli_token`'ı kendi veritabanında saklar (adli süreç için).
 - ePub oturum sonunda TEE tarafından silinir — geçmiş oturumlarla ilişkilendirilemez.
-- uPubHash sabittir ancak BTK tarafında ePub ile maskelenir.
+- uPubHash_s her oturumda farklıdır — BTK aynı kullanıcının oturumlarını ilişkilendiremez (bkz. Bölüm 2.5).
 
 #### 5.1.4. Adli Süreç (Mahkeme Kararı ile Kimlik Tespiti)
 
 ```
-Adım 1: Mahkeme, X.com'dan sifreli_token'ı resmi yazı ile talep eder.
-        Firma token'ı mahkemeye iletmekle yükümlüdür.
+Adım 1: Mahkeme, X.com'dan ilgili oturuma ait kayıtları resmi yazı ile talep eder.
+        Firma, kendi veritabanında sakladığı sifreli_token'ı F_priv ile açar,
+        içindeki token_paket'i (token_hash, token_ham, btk_imza)
+        mahkemeye düz metin olarak sunar.
 
-Adım 2: Mahkeme, sifreli_token'ı BTK'ya götürür.
+Adım 2: Mahkeme, token_paket'teki token_hash ve btk_imza'yı BTK'ya götürür.
         BTK, token_hash ile kendi kayıtlarında arama yapar:
           btk_kayit = lookup(token_hash)
-          // btk_kayit = {token_hash, ePub, uPubHash, firma_id, timestamp}
-        uPubHash'i mahkemeye resmi yazı ile bildirir.
+          // btk_kayit = {token_hash, ePub, uPubHash_s, firma_id, timestamp}
+        uPubHash_s'i mahkemeye resmi yazı ile bildirir.
 
-Adım 3: Mahkeme, uPubHash ile DOĞRUDAN eDevlet'e başvurur.
+Adım 3: Mahkeme, uPubHash_s ile DOĞRUDAN eDevlet'e başvurur.
         BTK bu adımda aracı değildir — manipülasyon riski ortadan kalkar.
-        eDevlet, kendi veritabanında uPubHash → TC_kimlik eşlemesini bulur.
+        eDevlet, uPubHash_s'i eDev_priv ile açar, SHA3-256(uPub) değerini elde eder,
+        indeks tablosundan uPub → TC_kimlik eşlemesini bulur (bkz. Bölüm 2.5).
 
 Adım 4: eDevlet, TC kimliğini yalnızca mahkemeye bildirir.
 ```
@@ -484,17 +493,20 @@ GKDP şu aşamada aşağıdaki güvenilir donanım platformlarını kapsar:
 
 ## 8. Güvenlik Özellikleri
 
-### BTK Tarafından Korelasyon Riski (Kabul Edilmiş Risk)
+### BTK Tarafından Korelasyon Koruması
 
-BTK, `uPubHash` sabit olduğu için aynı kullanıcının farklı oturumlarını teorik olarak ilişkilendirebilir. Bu, protokol tasarımında **kabul edilmiş bir risktir** — çünkü BTK zaten devlet kurumudur ve temel amaç **diğer aktörlerin (platformlar, üçüncü taraflar) korelasyon yapamamasıdır.** Gizlilik seviyesi "devlet sırrı değil, diğer firmalara karşı" olarak tanımlanmıştır.
+BTK'nın aynı kullanıcının farklı oturumlarını ilişkilendirmesi, `uPubHash_s` mekanizması ile **matematiksel olarak engellenmiştir.** Her oturumda TEE, `SHA3-256(uPub)` değerini `eDev_pub` ile şifreleyerek oturumluk bir `uPubHash_s` üretir (bkz. Bölüm 2.5). BTK `eDev_priv`'e sahip olmadığı için `uPubHash_s`'i açamaz ve aynı kullanıcıya ait farklı oturumları ayırt edemez (IND-CPA güvenli).
 
-BTK korelasyon riskini tamamen ortadan kaldırmak için **kör imza (blind signature)** veya **grup imza (group signature)** tabanlı çözümler uygulanabilir, ancak bu yaklaşımlar sistemi önemli ölçüde karmaşıklaştırır ve şu aşamada kapsam dışıdır.
+Bu çözümün avantajları:
+- **Kör imza veya grup imza gerektirmez** — standart Kyber + AES-GCM yeterlidir.
+- **eDevlet runtime'da devrede değildir** — yalnızca kayıt anında indeks tablosu oluşturur, adli süreçte şifre çözer.
+- **Ek maliyet:** eDevlet'te kullanıcı başına bir indeks kaydı (~85 milyon satır).
 
 ### Forward Secrecy
 Sarı seviyede her işlem bağımsız bir ephemeral anahtar çifti kullanır. Geçmiş oturumlar geriye dönük olarak çözülemez. Yeşil seviyede ePub her oturumda yenilenir ve oturum sonunda silinir; işlem içeriği olmadığından forward secrecy gerekmez.
 
 ### Kimlik Bağlantısızlığı (Unlinkability)
-TC kimliği hiçbir zaman platforma veya BTK'ya iletilmez. Her oturumda yeni ePub üretilir — BTK aynı kullanıcının farklı oturumlarını ePub üzerinden ayırt edemez. Ancak BTK `uPubHash` sabit olduğu için teorik korelasyon yapabilir (bkz. aşağıdaki risk kabulü). Platformlar kullanıcı oturumlarını bağlayamaz.
+TC kimliği hiçbir zaman platforma veya BTK'ya iletilmez. Her oturumda yeni ePub ve yeni `uPubHash_s` üretilir — BTK aynı kullanıcının farklı oturumlarını ne ePub ne de `uPubHash_s` üzerinden ayırt edemez (bkz. Bölüm 2.5). Platformlar kullanıcı oturumlarını bağlayamaz.
 
 ### Kuantum Direnci
 Tüm imzalama işlemleri kafes tabanlı Dilithium3, tüm anahtar kapsülleme işlemleri kafes tabanlı Kyber-768 kullanır. AES-256-GCM klasik tehditlere karşı güvenlidir ve Grover algoritması ile 2^128 güvenlik seviyesi sağlar. RSA/ECDH tabanlı sistemlere karşı Shor algoritmasıyla gerçekleştirilebilecek kuantum saldırıları bu protokole uygulanamaz.
@@ -518,8 +530,8 @@ BTK token kayıtlarını, eDevlet ise günlük Merkle kök hash'lerini bağıms�
 | Tehdit | Etki | Protokol Yanıtı |
 |---|---|---|
 | Platform ihlali | Saldırgan platform veritabanını ele geçirir | TC kimliği platformda yoktur — sadece ePub ve şifreli token vardır |
-| BTK ihlali | BTK altyapısı tehlikeye girer | BTK'da TC kimliği yoktur — uPub ve uPubHash listeleri açığa çıkabilir |
-| BTK korelasyonu | BTK, uPub sabit olduğu için kullanıcı oturumlarını bağlayabilir | Kabul edilmiş risk (bkz. Bölüm 8). BTK devlet kurumudur |
+| BTK ihlali | BTK altyapısı tehlikeye girer | BTK'da TC kimliği ve uPub bulunmaz. Saldırgan yalnızca şifreli uPubHash_s ve ePub listelerini ele geçirebilir — bu veriler kullanıcı kimliğini açığa çıkarmaz ve korelasyon yapılamaz |
+| BTK korelasyonu | BTK, kullanıcı oturumlarını ilişkilendirmeye çalışabilir | `uPubHash_s` her oturumda farklıdır, BTK açamaz — korelasyon matematiksel olarak imkansız (bkz. Bölüm 2.5, Bölüm 8) |
 | Token çalınması | Başka platformda kullanılmaya çalışılır | firma_id eşleşmediği ve F_priv olmadığı için açılamaz |
 | uPriv çalınması | Saldırgan kullanıcı adına işlem yapabilir | CRL ile iptal, yeni kayıt |
 | Yetkisiz firma talebi | Platform TC kimliği talep eder | BTK firma_istegi kontrolü ile reddeder |
