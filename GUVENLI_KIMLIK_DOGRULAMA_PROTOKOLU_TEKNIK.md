@@ -412,7 +412,7 @@ uPriv, ePriv ve ePub yalnızca TEE (Trusted Execution Environment) içinde üret
 
 > **Not:** Intel SGX birçok PC'de devre dışıdır; AMD SEV ağırlıklı olarak sunucu ortamlarına yöneliktir. GKDP öncelikli hedef olarak ARM TrustZone tabanlı mobil cihazları esas alır. PC desteği TEE standardizasyonunun olgunlaşmasıyla genişleyecektir.
 >
-> **İleriye Dönük:** PC'lerde TEE standardizasyonu olgunlaştıkça, [MELP Programlama Dili](https://melp.dev) ile geliştirilmesi planlanan **EOK (Enforceable Object Kernel)** çözümü alternatif bir güvenlik katmanı sunabilir. EOK, güvenliği runtime'da CPU düzeyine indirmeyi ve donanım TEE'sine yazılımsal bir tamamlayıcı sağlamayı vadetmektedir. Bu yaklaşım hâlen araştırma aşamasındadır (MELP STAGE3.5).
+> **İleriye Dönük:** PC'lerde TEE standardizasyonu olgunlaştıkça, [MELP Programlama Dili](https://melp.dev) ile geliştirilmesi planlanan **EOK (Encrypted Optimizasyon Katmanı)** çözümü alternatif bir güvenlik katmanı sunabilir. EOK, güvenliği runtime'da CPU düzeyine indirmeyi ve donanım TEE'sine yazılımsal bir tamamlayıcı sağlamayı vadetmektedir. Bu yaklaşım hâlen araştırma aşamasındadır (MELP STAGE3.5).
 
 ### 7.1 Masaüstü PC ve TEE'siz Cihazlar için USB Donanım Anahtarı
 
@@ -435,6 +435,8 @@ Masaüstü PC'lerde donanımsal TEE yaygın değildir. Kullanıcının PC'sini P
 ```
 
 USB donanım anahtarı, mobil cihazı olmayan veya PC'den giriş yapmak isteyen kullanıcılar için birincil çözümdür. Türkiye'de e-imza ve akıllı kart altyapısı bu modele benzer şekilde çalışmaktadır.
+
+> **USB Anahtar Kayıt Süreci:** USB anahtarın ilk kaydı PTT şubesinde yapılır. Görevli, USB anahtarı PTT'deki okuyucuya takar, kullanıcının kimliğini doğrular ve anahtar içinde üretilen uPub'ı sisteme kaydeder. Kullanıcı daha sonra bu USB anahtarı kendi PC'sinde veya başka bir PC'de kullanabilir. Bu süreç, mobil cihazın PTT'ye götürülmesiyle aynı güvenlik seviyesini sağlar.
 
 ### 7.2 Geçici Erişim Kodu (TOTP Benzeri)
 
@@ -459,6 +461,8 @@ Kullanıcının ne mobil cihazının ne USB anahtarının yanında olmadığı a
 ```
 
 > **Sınırlama:** Geçici erişim kodu, kullanıcının önceden hazırlamış olduğu bir kodu gerektirir. Hiçbir hazırlığı olmayan bir kullanıcı bu mekanizmadan yararlanamaz. Bu bilinçli bir güvenlik tercihidir — GKDP, "tamamen hazırlıksız anlık erişim" senaryosunu kapsamaz.
+>
+> **Kullanıcı Önerisi:** Seyahat gibi durumlar için kullanıcılar, kendi TEE'li cihazlarında önceden birkaç geçici kod üretebilir, bunları yanlarında taşıyabilir (cüzdan, basılı kağıt). Her kod yalnızca bir kez ve belirli bir platform için kullanılabilir. Kod ele geçse bile firma_id bağlaması sayesinde başka platformda kullanılamaz.
 
 ### 7.3 Kapsam Sınırı (v0.9)
 
