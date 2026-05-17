@@ -411,6 +411,8 @@ uPriv, ePriv ve ePub yalnızca TEE (Trusted Execution Environment) içinde üret
 **TEE yoksa:** Protokol çalışmaz. Yazılımsal izolasyon yeterli kabul edilmez.
 
 > **Not:** Intel SGX birçok PC'de devre dışıdır; AMD SEV ağırlıklı olarak sunucu ortamlarına yöneliktir. GKDP öncelikli hedef olarak ARM TrustZone tabanlı mobil cihazları esas alır. PC desteği TEE standardizasyonunun olgunlaşmasıyla genişleyecektir.
+>
+> **İleriye Dönük:** PC'lerde TEE standardizasyonu olgunlaştıkça, [MELP Programlama Dili](https://melp.dev) ile geliştirilmesi planlanan **EOK (Enforceable Object Kernel)** çözümü alternatif bir güvenlik katmanı sunabilir. EOK, güvenliği runtime'da CPU düzeyine indirmeyi ve donanım TEE'sine yazılımsal bir tamamlayıcı sağlamayı vadetmektedir. Bu yaklaşım hâlen araştırma aşamasındadır (MELP STAGE3.5).
 
 ---
 
