@@ -6,6 +6,8 @@
 
 ---
 
+> **Köken:** GKDP, [EIDA (Ephemeral Identity Distribution Architecture)](https://github.com/guvenacar/EIDA) protokolünün Türkiye kamu gereksinimlerine göre uyarlanmış bir türevidir. EIDA'nın temel mimari ilkesi olan *"güvenliği merkezi yapıdan alıp kullanıcı cihazlarına dağıtma"* yaklaşımı GKDP'de aynen korunmuştur. Bu sayede BTK altyapısı saldırıya uğrasa dahi saldırganların eline yalnızca anlamsız hash çıktıları ve oturumluk geçici tanımlayıcılar geçer — kullanıcı kimlik bilgileri (TC kimlik, uPriv) BTK dahil hiçbir merkezi sistemde bulunmaz. Saldırı yüzeyi tek bir kritik sistemden milyonlarca bireysel cihaza dağıtılmıştır.
+
 ## 1. Kriptografik Primitifler
 
 Bu protokol yalnızca NIST onaylı, kuantum dirençli algoritmalar kullanır.
