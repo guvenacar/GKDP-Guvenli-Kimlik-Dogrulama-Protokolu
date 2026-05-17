@@ -414,6 +414,68 @@ uPriv, ePriv ve ePub yalnızca TEE (Trusted Execution Environment) içinde üret
 >
 > **İleriye Dönük:** PC'lerde TEE standardizasyonu olgunlaştıkça, [MELP Programlama Dili](https://melp.dev) ile geliştirilmesi planlanan **EOK (Enforceable Object Kernel)** çözümü alternatif bir güvenlik katmanı sunabilir. EOK, güvenliği runtime'da CPU düzeyine indirmeyi ve donanım TEE'sine yazılımsal bir tamamlayıcı sağlamayı vadetmektedir. Bu yaklaşım hâlen araştırma aşamasındadır (MELP STAGE3.5).
 
+### 7.1 Masaüstü PC ve TEE'siz Cihazlar için USB Donanım Anahtarı
+
+Masaüstü PC'lerde donanımsal TEE yaygın değildir. Kullanıcının PC'sini PTT'ye götürmesi de pratik değildir. Bu sorunu çözmek için **USB donanım güvenlik anahtarı** modeli önerilir:
+
+```
+1. Kullanıcı PTT şubesine gider, USB donanım anahtarı alır
+   (e-Devlet şifre kartı dağıtım modeline benzer)
+
+2. USB anahtar içinde TEE işlevi bulunur:
+   - uPriv anahtar içinde üretilir, cihazdan çıkmaz
+   - Dilithium3 imzalama ve Kyber-768 KEM işlemleri anahtar içinde yapılır
+   - TRNG donanımsal rastgelelik sağlar
+
+3. PC'ye takıldığında GKDP izolasyon bölgesi olarak çalışır
+   Oturum bitince USB çıkarılır, geride iz kalmaz
+
+4. Aynı USB anahtar farklı PC'lerde kullanılabilir (companion model benzeri)
+   Kullanıcı kendi cihazı olmayan bir PC'den de giriş yapabilir
+```
+
+USB donanım anahtarı, mobil cihazı olmayan veya PC'den giriş yapmak isteyen kullanıcılar için birincil çözümdür. Türkiye'de e-imza ve akıllı kart altyapısı bu modele benzer şekilde çalışmaktadır.
+
+### 7.2 Geçici Erişim Kodu (TOTP Benzeri)
+
+Kullanıcının ne mobil cihazının ne USB anahtarının yanında olmadığı acil durumlar için **geçici erişim kodu** mekanizması tanımlanır:
+
+```
+1. Kullanıcı önceden kendi TEE'li cihazında tek kullanımlık kod üretir:
+   gecici_kod = SHAKE-256(uPriv || timestamp || firma_id, 8)  // 8 haneli
+
+2. Kod özellikleri:
+   - Geçerlilik: 1 saat (yapılandırılabilir)
+   - Belirli bir firma_id'ye bağlı (örn. sadece x.com için)
+   - Tek kullanımlık (BTK ilk doğrulamada kodu tüketir)
+
+3. Arkadaşının PC'sinde:
+   Kullanıcı bu kodu girer → BTK doğrular → normal token üretir
+
+4. BTK güvencesi:
+   - Aynı kodla ikinci istek reddedilir (single-use)
+   - Süresi geçmiş kod reddedilir
+   - Firma_id eşleşmeyen kod reddedilir
+```
+
+> **Sınırlama:** Geçici erişim kodu, kullanıcının önceden hazırlamış olduğu bir kodu gerektirir. Hiçbir hazırlığı olmayan bir kullanıcı bu mekanizmadan yararlanamaz. Bu bilinçli bir güvenlik tercihidir — GKDP, "tamamen hazırlıksız anlık erişim" senaryosunu kapsamaz.
+
+### 7.3 Kapsam Sınırı (v0.9)
+
+GKDP şu aşamada aşağıdaki güvenilir donanım platformlarını kapsar:
+
+| Platform | Durum |
+|----------|-------|
+| ARM TrustZone (mobil) | ✅ Öncelikli, tam destek |
+| USB donanım anahtarı | ✅ Önerilen PC çözümü |
+| Apple Secure Enclave | ✅ M1/M2 Mac cihazlar |
+| Intel TDX / AMD SEV | ⚠️ Sunucu tarafı için uygun; tüketici PC'de yaygın değil |
+| TPM 2.0 (tek başına) | ⚠️ Anahtar saklama için, tam TEE değil |
+| Yazılımsal izolasyon | ❌ Kabul edilmez |
+| TEE'siz ortam | ❌ Protokol çalışmaz — bilinçli güvenlik kararı |
+
+> GKDP, donanımsal TEE olmadan çalışmaz. Bu bir eksiklik değil, protokolün temel güvenlik varsayımıdır. Kullanıcıların her zaman bir TEE'ye sahip cihazı (mobil telefon veya USB anahtar) yanlarında bulundurması beklenir. Bu kısıt, bankacılık uygulamalarının "güvenli cihaz" zorunluluğuyla benzer niteliktedir.
+
 ---
 
 ## 8. Güvenlik Özellikleri
