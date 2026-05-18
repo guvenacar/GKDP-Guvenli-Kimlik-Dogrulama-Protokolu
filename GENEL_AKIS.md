@@ -134,6 +134,7 @@ KULLANICI CİHAZI (TEE)                  BTK
                                      │     ePub, timestamp, nonce, ...}
                                      │
                                      │  BTK_priv ile token_ham imzalanır → btk_imza
+                                     │  BTK_priv ile h2 imzalanır → btk_h2_imza
                                      │  token_hash = SHA3-256(token_ham || btk_imza)
                                      │  token_paket = {token_hash, token_ham, btk_imza}
                                      │  F_pub ile şifrelenir → sifreli_token
@@ -141,17 +142,22 @@ KULLANICI CİHAZI (TEE)                  BTK
                                      │  BTK kayıt: {token_hash, h1, h2, ePub, ...}
 ```
 
-### Adım 5 — BTK token'ı TEE'ye gönderir, TEE doğrular ve firmaya iletir
+### Adım 5 — BTK yanıtı TEE'ye gönderir, TEE doğrular ve firmaya iletir
 
 ```
 KULLANICI CİHAZI         BTK                FİRMA
      │                    │                    │
      │← sifreli_token ───│                    │
-     │   + h2 (düz)      │                    │
+     │   + h2 +           │                    │
+     │   btk_h2_imza      │                    │
      │                    │                    │
-     │ TEE kontrol:       │                    │
-     │ assert h2 ==       │                    │
-     │   kendi_h2'si      │                    │
+     │ TEE kontroller:    │                    │
+     │ 1. BTK_pub ile     │                    │
+     │    btk_h2_imza     │                    │
+     │    doğrulanır →    │                    │
+     │    yanıt BTK'dan   │                    │
+     │ 2. assert h2 ==    │                    │
+     │    kendi_h2'si     │                    │
      │ ✅ BTK doğru token  │                    │
      │   çiftini işledi   │                    │
      │                    │                    │

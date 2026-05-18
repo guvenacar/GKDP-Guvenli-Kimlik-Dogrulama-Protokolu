@@ -285,6 +285,9 @@ btk_imza = Dilithium3.Sign(BTK_priv, SHA3-256(token_ham))
 // canonical_json: deterministik JSON serileştirme (anahtarlar alfabetik, boşluksuz)
 token_hash = SHA3-256(canonical_json(token_ham) || btk_imza)
 
+// BTK, h2 için ayrı imza üretir (TEE'nin yanıtın BTK'dan geldiğini doğrulaması için)
+btk_h2_imza = Dilithium3.Sign(BTK_priv, h2 || token_hash)
+
 // BTK kendi kaydını tutar
 btk_kayit = {token_hash, h1, h2, ePub, firma_id, timestamp}
 
@@ -297,14 +300,19 @@ aes_key_f ← HKDF-SHA3-256(ss_f, nonce, 32)
 sifreli_token = {AES-256-GCM(aes_key_f, token_paket), ct_f}
 ```
 
-##### Adım 5 — BTK token'ı TEE'ye gönderir, TEE doğrular ve firmaya iletir
+##### Adım 5 — BTK yanıtı TEE'ye gönderir, TEE doğrular ve firmaya iletir
 
 ```
-// BTK → TEE: sifreli_token + h2 (düz metin)
-BTK, sifreli_token ve token_ham.h2 değerini TEE'ye gönderir.
+// BTK → TEE: sifreli_token + {h2, btk_h2_imza}
+BTK, sifreli_token ile birlikte h2 ve btk_h2_imza'yı TEE'ye gönderir.
 
 // TEE tarafında:
-assert h2 == kullanilan_token.h2   // BTK doğru çifti işledi mi?
+// 1. BTK imzasını doğrula → yanıt gerçekten BTK'dan mı geldi?
+Dilithium3.Verify(BTK_pub, h2 || token_hash, btk_h2_imza)
+
+// 2. h2 eşleşiyor mu? → BTK doğru çifti işledi mi?
+assert h2 == kullanilan_token.h2
+
 // TEE sifreli_token'i açamaz (F_pub ile şifreli), değiştirmez
 
 // TEE → Firma
