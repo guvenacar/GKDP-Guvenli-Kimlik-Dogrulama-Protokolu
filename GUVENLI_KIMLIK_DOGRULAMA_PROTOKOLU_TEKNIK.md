@@ -82,7 +82,7 @@ Her çift (n = 1..N) için:
   Kullanici_token_n = {h1_n, h2_n, cert_n}
 ```
 
-> **Neden deterministik?** eDevlet'in her token çifti için ayrı indeks tutması gerekmez — yalnızca `user_seed` saklanır (~85M kayıt, ~2.7 GB). Adli süreçte h1 verildiğinde, eDevlet tüm kullanıcı seed'lerini tarar (~85M HMAC, modern donanımda ~2 saniye). `K_eDev` HSM'de korunur; ele geçse bile saldırgan TEE'ye erişemeden token'ları kullanamaz.
+> **Neden deterministik?** eDevlet'in her token çifti için ayrı indeks tutması gerekmez — yalnızca `user_seed` saklanır (~85M kayıt, ~2.7 GB). Adli süreçte h1 verildiğinde, eDevlet tüm kullanıcı seed'lerini tarar (~85M HMAC, GPU/sunucu ile ~2 saniye). Bu, O(1) indeks yerine O(N) taramadır — **bilinçli bir tradeoff:** gizlilik kazancı (indeks yok = sızıntı yüzeyi küçük) karşılığında adli süreçte hesaplama maliyeti. `K_eDev` HSM'de korunur; ele geçse bile saldırgan TEE'ye erişemeden token'ları kullanamaz. `K_eDev` rotasyonu için ileri versiyonlarda anahtar türetme zinciri (HKDF hiyerarşisi) önerilir.
 
 - **Kullanici_token_n:** TEE içinde düz metin saklanır (TEE koruması altında). Her oturumda bir tanesi tüketilir.
 - **BTK_token_n:** BTK'nın açık anahtarı ile şifrelidir — yalnızca BTK açabilir. TEE bu veriyi açamaz; oturumda BTK'ya iletir.
@@ -514,13 +514,16 @@ GKDP şu aşamada aşağıdaki güvenilir donanım platformlarını kapsar:
 
 ### BTK Tarafından Korelasyon Koruması
 
-BTK'nın aynı kullanıcının farklı oturumlarını ilişkilendirmesi, **çift token mekanizması** ile **matematiksel olarak engellenmiştir.** Kayıt aşamasında eDevlet her kullanıcı için N adet rastgele `(h1, h2)` çifti üretir (bkz. Bölüm 2.5). Her oturumda farklı bir çift kullanılır; BTK yalnızca `h1`'i görür. `h1` değerleri birbirinden bağımsız rastgele sayılar olduğu için BTK aynı kullanıcıya ait farklı oturumları ayırt edemez.
+BTK'nın aynı kullanıcının farklı oturumlarını **kriptografik kimlik düzeyinde** ilişkilendirmesi, **çift token mekanizması** ile engellenmiştir. Kayıt aşamasında eDevlet her kullanıcı için N adet `(h1, h2)` çiftini deterministik türetir (bkz. Bölüm 2.5). Her oturumda farklı bir çift kullanılır; BTK yalnızca `h1`'i görür. `h1` değerleri HMAC ile türetildiği için kriptografik olarak ayırt edilemez.
+
+> **Kapsam notu:** Bu koruma **kriptografik kimlik katmanıyla sınırlıdır.** Ağ düzeyinde korelasyon (IP adresi, zamanlama analizi, trafik deseni) bu protokolün kapsamı dışındadır ve ayrıca ele alınmalıdır (örn. Tor, VPN). GKDP, "kimliksiz oturum" sağlar, "anonim ağ bağlantısı" sağlamaz.
 
 Bu çözümün avantajları:
 - **BTK uPub'ı hiç görmez** — eDevlet sertifikası BTK'ya iletilmez. Kullanıcının kalıcı kimliği BTK'dan tamamen gizlenir.
 - **TEE token'ı doğrular** — BTK'dan dönen token'daki `h2` değerini kendi kaydıyla karşılaştırarak BTK'nın doğru çifti işlediğini teyit eder. BTK sahte token üretemez.
-- **eDevlet runtime'da devrede değildir** — yalnızca kayıt anında token çiftlerini üretir, adli süreçte indeks sorgular.
-- **Ek maliyet:** eDevlet'te kullanıcı başına bir `user_seed` kaydı (~85 milyon, ~2.7 GB). TEE'de N token (~2 MB). Adli süreç taraması ~2 saniye.
+- **eDevlet runtime'da devrede değildir** — yalnızca kayıt anında token çiftlerini üretir, adli süreçte HMAC taraması yapar.
+- **Ek maliyet:** eDevlet'te kullanıcı başına bir `user_seed` kaydı (~85 milyon, ~2.7 GB). TEE'de N token (~2 MB). Adli süreç taraması ~85M HMAC (modern GPU/sunucuda ~2 saniye).
+- **Risk:** `K_eDev` HSM'de korunur. Teorik olarak sızması durumunda tüm kullanıcı token'ları yeniden türetilebilir — bu nedenle HSM zorunludur ve anahtar rotasyonu önerilir.
 
 ### Forward Secrecy
 Sarı seviyede her işlem bağımsız bir ephemeral anahtar çifti kullanır. Geçmiş oturumlar geriye dönük olarak çözülemez. Yeşil seviyede ePub her oturumda yenilenir ve oturum sonunda silinir; işlem içeriği olmadığından forward secrecy gerekmez.
@@ -551,7 +554,7 @@ BTK token kayıtlarını, eDevlet ise günlük Merkle kök hash'lerini bağıms�
 |---|---|---|
 | Platform ihlali | Saldırgan platform veritabanını ele geçirir | TC kimliği platformda yoktur — sadece ePub ve şifreli token vardır |
 | BTK ihlali | BTK altyapısı tehlikeye girer | BTK'da TC kimliği ve uPub bulunmaz. Saldırgan yalnızca rastgele h1/h2 çiftleri ve ePub listelerini ele geçirebilir — bu veriler kullanıcı kimliğini açığa çıkarmaz ve korelasyon yapılamaz |
-| BTK korelasyonu | BTK, kullanıcı oturumlarını ilişkilendirmeye çalışabilir | Her oturumda farklı rastgele h1 kullanılır, BTK uPub'ı hiç görmez — korelasyon matematiksel olarak imkansız (bkz. Bölüm 2.5, Bölüm 8) |
+| BTK korelasyonu | BTK, kullanıcı oturumlarını kriptografik kimlik düzeyinde ilişkilendirmeye çalışabilir | Her oturumda farklı h1 kullanılır, BTK uPub'ı hiç görmez — kriptografik kimlik korelasyonu imkansızdır. Ağ düzeyinde korelasyon kapsam dışıdır (bkz. Bölüm 2.5, Bölüm 8) |
 | Token çalınması | Başka platformda kullanılmaya çalışılır | firma_id eşleşmediği ve F_priv olmadığı için açılamaz |
 | uPriv çalınması | Saldırgan kullanıcı adına işlem yapabilir | CRL ile iptal, yeni kayıt |
 | Yetkisiz firma talebi | Platform TC kimliği talep eder | BTK firma_istegi kontrolü ile reddeder |
@@ -559,6 +562,7 @@ BTK token kayıtlarını, eDevlet ise günlük Merkle kök hash'lerini bağıms�
 | Oturum korelasyonu | Aynı kullanıcının farklı oturumları izlenir | ePub her oturumda yenilenir; platformlar oturumları bağlayamaz |
 | Kuantum saldırısı | Gelecekte kuantum bilgisayar ile şifre çözme | Dilithium3 + Kyber-768 + AES-256-GCM kuantum dirençlidir |
 | eDevlet kesintisi | Runtime işlemler durur | eDevlet runtime'da devrede değildir — etki yok |
+| `K_eDev` sızması | eDevlet HSM anahtarı ele geçirilir | Tüm kullanıcı token çiftleri yeniden türetilebilir. HSM + anahtar rotasyonu ile risk azaltılır. Saldırgan TEE'ye erişemediği sürece token'ları kullanamaz (bkz. Bölüm 8) |
 | BTK kayıt manipülasyonu | BTK token kayıtlarını değiştirir | TEE token'daki h2'yi doğrular; firma kendi token kopyasını saklar — çapraz doğrulama mümkündür |
 | Firma token silme | Firma adli süreçte token'ı gösteremez | BTK kendi token_hash kaydını tutar — firmadan bağımsız kanıt mevcuttur |
 | Token çifti tüketme | Saldırgan kullanıcının token'larını tüketir | Token'lar TEE içinde saklanır; TEE olmadan tüketilemez. Tükenme durumunda eDevlet'ten yenisi alınır |
