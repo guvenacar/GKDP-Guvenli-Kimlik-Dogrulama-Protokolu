@@ -67,16 +67,22 @@ Bu protokol yalnızca NIST onaylı, kuantum dirençli algoritmalar kullanır.
 
 ### 2.5 Kullanıcı Token Çiftleri — Oturumluk Kimliksiz Tanımlayıcılar
 
-Kayıt aşamasında eDevlet, her kullanıcı için N adet (varsayılan: 1000) rastgele hash çifti üretir:
+Kayıt aşamasında eDevlet, her kullanıcı için N adet (varsayılan: 1000) token çiftini deterministik olarak türetir:
 
 ```
+// eDevlet içinde (HSM):
+user_seed = HMAC-SHA3(K_eDev, uPub)       // kullanıcıya özel anahtar
+
 Her çift (n = 1..N) için:
-  h1_n, h2_n ← CSPRNG(256 bit)           // birbirinden bağımsız rastgele
-  cert_n = Dilithium3.Sign(eDev_priv, h1_n || h2_n)  // eDevlet onaylı çift
+  h1_n = HMAC-SHA3(user_seed, "h1" || n)  // deterministik türetme
+  h2_n = HMAC-SHA3(user_seed, "h2" || n)
+  cert_n = Dilithium3.Sign(eDev_priv, h1_n || h2_n)
 
   BTK_token_n    = HybridEncrypt(BTK_pub, {h1_n, h2_n, cert_n})
   Kullanici_token_n = {h1_n, h2_n, cert_n}
 ```
+
+> **Neden deterministik?** eDevlet'in her token çifti için ayrı indeks tutması gerekmez — yalnızca `user_seed` saklanır (~85M kayıt, ~2.7 GB). Adli süreçte h1 verildiğinde, eDevlet tüm kullanıcı seed'lerini tarar (~85M HMAC, modern donanımda ~2 saniye). `K_eDev` HSM'de korunur; ele geçse bile saldırgan TEE'ye erişemeden token'ları kullanamaz.
 
 - **Kullanici_token_n:** TEE içinde düz metin saklanır (TEE koruması altında). Her oturumda bir tanesi tüketilir.
 - **BTK_token_n:** BTK'nın açık anahtarı ile şifrelidir — yalnızca BTK açabilir. TEE bu veriyi açamaz; oturumda BTK'ya iletir.
@@ -133,24 +139,21 @@ Kullanıcı sisteme ilk kez dahil olurken gerçekleşir. eDevlet yalnızca bu a�
    // Sertifika kullanıcının TEE'sinde saklanır
 ```
 
-5. eDevlet N adet token çifti üretir ve TEE'ye yükler:
+5. eDevlet N adet token çiftini deterministik türetir ve TEE'ye yükler:
+   user_seed = HMAC-SHA3(K_eDev, uPub)       // HSM içinde
    for n = 1..N:
-     h1_n, h2_n ← CSPRNG(256 bit)
+     h1_n = HMAC-SHA3(user_seed, "h1" || n)  // deterministik
+     h2_n = HMAC-SHA3(user_seed, "h2" || n)
      cert_n = Dilithium3.Sign(eDev_priv, h1_n || h2_n)
      BTK_token_n = HybridEncrypt(BTK_pub, {h1_n, h2_n, cert_n})
      Kullanici_token_n = {h1_n, h2_n, cert_n}
-   // eDevlet, token çiftlerini HMAC ile deterministik türetir:
-   //   user_seed = HMAC-SHA3(K_eDev, uPub)
-   //   h1_n = HMAC-SHA3(user_seed, "h1" || n)
-   //   h2_n = HMAC-SHA3(user_seed, "h2" || n)
-   // Bu sayede her token çifti için ayrı indeks kaydı gerekmez.
-   // Adli süreçte: eDevlet h1'i alır, tüm kullanıcıların user_seed'lerini
-   // tarar (~85M HMAC, modern donanımda ~2 saniye). Eşleşen kullanıcı bulunur.
+   // eDevlet yalnızca user_seed'i saklar (~32 bayt/kullanıcı).
+   // Token çiftleri gerektiğinde yeniden türetilebilir.
    TEE'ye N adet {BTK_token_n, Kullanici_token_n} yüklenir.
 ```
 
 **Bu aşamadan sonra:**
-- eDevlet: TC_kimlik ↔ uPub ↔ {tüm h1_n, h2_n} ilişkisini bilir.
+- eDevlet: TC_kimlik ↔ uPub eşleşmesini ve user_seed değerini bilir. Token çiftleri gerektiğinde user_seed"den yeniden türetilir.
 - BTK: hiçbir şey bilmez (token çiftleri henüz BTK'ya iletilmemiştir).
 - Üçüncü taraflar: hiçbir şey bilmez.
 - **eDevlet runtime işlemlerine dahil olmaz.**
