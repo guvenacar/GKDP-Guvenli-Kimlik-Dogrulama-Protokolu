@@ -65,17 +65,26 @@ Bu protokol yalnızca NIST onaylı, kuantum dirençli algoritmalar kullanır.
 - Kayıt aşamasında kullanıcı sertifikalarını imzalamak için kullanılır.
 - eDev_pub, BTK tarafından bilinir.
 
-### 2.5 uPubHash_s — Oturumluk Şifreli Kullanıcı Tanımlayıcı
+### 2.5 Kullanıcı Token Çiftleri — Oturumluk Kimliksiz Tanımlayıcılar
+
+Kayıt aşamasında eDevlet, her kullanıcı için N adet (varsayılan: 1000) rastgele hash çifti üretir:
 
 ```
-uPubHash_s = HybridEncrypt(eDev_pub, SHA3-256(uPub) || nonce)
+Her çift (n = 1..N) için:
+  h1_n, h2_n ← CSPRNG(256 bit)           // birbirinden bağımsız rastgele
+  cert_n = Dilithium3.Sign(eDev_priv, h1_n || h2_n)  // eDevlet onaylı çift
+
+  BTK_token_n    = HybridEncrypt(BTK_pub, {h1_n, h2_n, cert_n})
+  Kullanici_token_n = {h1_n, h2_n, cert_n}
 ```
 
-- **HybridEncrypt:** Kyber-768 KEM ile paylaşımlı sır elde edilir, HKDF ile AES-256-GCM anahtarı türetilir, veri AES-256-GCM ile şifrelenir.
-- `uPubHash_s`, her oturumda farklı bir değer üretir — aynı `SHA3-256(uPub)` farklı `nonce` ile şifrelendiğinde farklı şifreli metin oluşur (IND-CPA).
-- BTK `uPubHash_s`'i açamaz — `eDev_priv` yalnızca eDevlet'tedir. Bu sayede BTK aynı kullanıcının farklı oturumlarını ilişkilendiremez.
-- **Adli süreçte:** eDevlet `uPubHash_s`'i `eDev_priv` ile açar, `SHA3-256(uPub)` değerini elde eder, indeks tablosundan `uPub` ve `TC_kimlik`'e ulaşır.
-- **eDevlet indeks tablosu:** Kayıt aşamasında oluşturulur: `SHA3-256(uPub) → uPub → TC_kimlik`. Kullanıcı başına bir kayıt (~85 milyon). Runtime'da sorgulanmaz.
+- **Kullanici_token_n:** TEE içinde düz metin saklanır (TEE koruması altında). Her oturumda bir tanesi tüketilir.
+- **BTK_token_n:** BTK'nın açık anahtarı ile şifrelidir — yalnızca BTK açabilir. TEE bu veriyi açamaz; oturumda BTK'ya iletir.
+- **cert_n:** eDevlet'in `h1_n || h2_n` üzerindeki imzası. BTK, çiftin eDevlet onaylı olduğunu bu imzadan doğrular.
+- **h1_n:** BTK'nın gördüğü tanımlayıcı. Her oturumda farklıdır — korelasyon imkansızdır.
+- **h2_n:** Firmaya token içinde iletilen tanımlayıcı. Firma için anlamsızdır; TEE, BTK'nın doğru çifti işlediğini h2 üzerinden doğrular.
+- **eDevlet indeks tablosu:** Kayıt aşamasında oluşturulur: `h1_n → uPub → TC_kimlik` ve `h2_n → uPub → TC_kimlik` (N kayıt/kullanıcı). Runtime'da sorgulanmaz.
+- **Tükenme:** Tokenlar bittiğinde kullanıcı çevrimiçi olarak eDevlet'ten yeni paket alır. 1000 token ≈ 1-3 yıllık kullanım.
 
 ### 2.6 Firma Anahtar Çifti (Platform)
 
@@ -124,9 +133,19 @@ Kullanıcı sisteme ilk kez dahil olurken gerçekleşir. eDevlet yalnızca bu a�
    // Sertifika kullanıcının TEE'sinde saklanır
 ```
 
+5. eDevlet N adet token çifti üretir ve TEE'ye yükler:
+   for n = 1..N:
+     h1_n, h2_n ← CSPRNG(256 bit)
+     cert_n = Dilithium3.Sign(eDev_priv, h1_n || h2_n)
+     BTK_token_n = HybridEncrypt(BTK_pub, {h1_n, h2_n, cert_n})
+     Kullanici_token_n = {h1_n, h2_n, cert_n}
+   eDevlet indekse ekler: h1_n → uPub → TC_kimlik (adli süreç için)
+   TEE'ye N adet {BTK_token_n, Kullanici_token_n} yüklenir.
+```
+
 **Bu aşamadan sonra:**
-- eDevlet: TC_kimlik ↔ uPub ↔ uPubHash ilişkisini bilir.
-- BTK: uPub'ı eDevlet'in onayladığını bilir (sertifikadan çıkarır). TC_kimlik'i bilmez.
+- eDevlet: TC_kimlik ↔ uPub ↔ {tüm h1_n, h2_n} ilişkisini bilir.
+- BTK: hiçbir şey bilmez (token çiftleri henüz BTK'ya iletilmemiştir).
 - Üçüncü taraflar: hiçbir şey bilmez.
 - **eDevlet runtime işlemlerine dahil olmaz.**
 
@@ -186,38 +205,32 @@ platform_istegi = {
 }
 ```
 
-##### Adım 2 — TEE ePriv/ePub üretir, iki katmanlı imza zinciri kurar, BTK'ya iletir
+##### Adım 2 — TEE kullanılmamış bir token seçer, ePub üretir, BTK'ya iletir
 
 ```
 // TEE içinde:
 (ePriv, ePub) ← Dilithium3.KeyGen()    // oturumluk anahtar çifti
 nonce ← SHAKE-256(TRNG_random, 16)
 
-// Oturumluk şifreli kullanıcı tanımlayıcı hesaplanır
-uPubHash_s = HybridEncrypt(eDev_pub, SHA3-256(uPub) || nonce)
-// HybridEncrypt = Kyber-768 KEM → HKDF → AES-256-GCM
+// Kullanılmamış bir token çifti seçilir
+Kullanici_token_n = {h1, h2, cert}     // TEE içinden okunur
+// BTK_token_n TEE tarafından açılamaz (BTK_pub ile şifreli)
 
 // Talep oluşturulur
 talep = {
+    BTK_token_n,       // = HybridEncrypt(BTK_pub, {h1, h2, cert})
+    h1,                // BTK'nın eşleştirme yapabilmesi için düz metin
     ePub,
-    uPubHash_s,
     firma_id,
     firma_istegi,
     timestamp,
     nonce
 }
 
-// İki katmanlı imza zinciri:
-// 1. ePriv ile talep imzalanır → bu oturuma bağlar
-e_imza = Dilithium3.Sign(ePriv, SHA3-256(talep))
-// 2. uPriv ile e_imza imzalanır → bu kullanıcıya bağlar
-u_imza = Dilithium3.Sign(uPriv, SHA3-256(e_imza))
-
-// eDevlet sertifikası ile birlikte KEM + AES-GCM ile şifrelenir
-paket = {eDevlet_sertifikasi, talep, e_imza, u_imza}
+// Talep BTK'nın açık anahtarı ile şifrelenir
 (ss, ct_kyber) ← Kyber768.Encapsulate(BTK_pub)
 aes_key ← HKDF-SHA3-256(ss, nonce, 32)
-sifreli_talep = {AES-256-GCM(aes_key, paket), ct_kyber}
+sifreli_talep = {AES-256-GCM(aes_key, talep), ct_kyber}
 ```
 
 ##### Adım 3 — BTK talebi açar ve doğrular
@@ -226,32 +239,28 @@ sifreli_talep = {AES-256-GCM(aes_key, paket), ct_kyber}
 // BTK tarafında:
 ss ← Kyber768.Decapsulate(BTK_priv, ct_kyber)
 aes_key ← HKDF-SHA3-256(ss, nonce, 32)
-paket = AES-256-GCM-Decrypt(aes_key, sifreli_talep.ct)
+talep = AES-256-GCM-Decrypt(aes_key, sifreli_talep.ct)
 
-// 1. Sertifikadan uPub'ı çıkar ve eDevlet imzasını doğrula
-uPub ← extract(eDevlet_sertifikasi)
-Dilithium3.Verify(eDev_pub, SHA3-256(uPub), eDevlet_sertifikasi)
+// 1. BTK_token_n'i aç
+{h1', h2, cert} ← HybridDecrypt(BTK_priv, talep.BTK_token_n)
 
-// 2. uPubHash_s saklanır (BTK açamaz, yalnızca adli süreç için saklar)
-//    uPubHash_s = HybridEncrypt(eDev_pub, SHA3-256(uPub) || nonce)
-//    BTK, eDev_priv'e sahip olmadığı için içeriğini göremez
+// 2. h1 eşleşiyor mu? → TEE gerçekten bu token'a sahip
+assert talep.h1 == h1'
 
-// 3. u_imza'yı doğrula → e_imza bu kullanıcıya ait
-Dilithium3.Verify(uPub, SHA3-256(e_imza), u_imza)
+// 3. eDevlet imzasını doğrula → bu çift eDevlet onaylı
+Dilithium3.Verify(eDev_pub, h1 || h2, cert)
 
-// 4. e_imza'yı doğrula → talep bu ePub için geçerli
-Dilithium3.Verify(ePub, SHA3-256(talep), e_imza)
+// 4. Token çifti daha önce kullanılmış mı?
+assert (h1, h2) not in kullanilmis_tokenlar
 
-// 5. CRL kontrolü
-assert uPub not in CRL
-
-// 6. Nonce tekrar kontrolü
+// 5. Nonce tekrar kontrolü
 assert (ePub, nonce) not in nonce_cache
 
-// 7. Firma isteği yetkili mi?
+// 6. Firma isteği yetkili mi?
 assert firma_istegi in izin_verilen_istekler
 
-// 8. Nonce'u önbelleğe al
+// 7. Token çiftini tüket ve nonce'u önbelleğe al
+kullanilmis_tokenlar.add(h1, h2)
 nonce_cache.add(ePub, nonce)
 ```
 
@@ -263,6 +272,7 @@ token_ham = {
     firma_id,
     seviye: "yesil",
     gecerli: true,
+    h2,                // oturumluk kimliksiz tanımlayıcı
     ePub,
     timestamp,
     nonce
@@ -276,7 +286,7 @@ btk_imza = Dilithium3.Sign(BTK_priv, SHA3-256(token_ham))
 token_hash = SHA3-256(canonical_json(token_ham) || btk_imza)
 
 // BTK kendi kaydını tutar
-btk_kayit = {token_hash, ePub, uPubHash_s, firma_id, timestamp}
+btk_kayit = {token_hash, h1, h2, ePub, firma_id, timestamp}
 
 // Token paketlenir ve firmanın açık anahtarı ile şifrelenir
 token_paket = {token_hash, token_ham, btk_imza}
@@ -287,11 +297,19 @@ aes_key_f ← HKDF-SHA3-256(ss_f, nonce, 32)
 sifreli_token = {AES-256-GCM(aes_key_f, token_paket), ct_f}
 ```
 
-##### Adım 5 — BTK şifreli token'ı TEE'ye, TEE firmaya iletir
+##### Adım 5 — BTK token'ı TEE'ye gönderir, TEE doğrular ve firmaya iletir
 
 ```
+// BTK → TEE: sifreli_token + h2 (düz metin)
+BTK, sifreli_token ve token_ham.h2 değerini TEE'ye gönderir.
+
+// TEE tarafında:
+assert h2 == kullanilan_token.h2   // BTK doğru çifti işledi mi?
+// TEE sifreli_token'i açamaz (F_pub ile şifreli), değiştirmez
+
 // TEE → Firma
-TEE, sifreli_token'i doğrudan firmaya iletir (değiştirmez, açmaz).
+TEE, sifreli_token'i doğrudan firmaya iletir.
+// Kullanılan token çifti TEE tarafından tüketildi olarak işaretlenir.
 ```
 
 ##### Adım 6 — Firma token'ı açar ve doğrular
@@ -320,7 +338,9 @@ Token geçerliyse platform girişe izin verir. TC kimliği hiçbir aşamada plat
 
 - Firma `sifreli_token`'ı kendi veritabanında saklar (adli süreç için).
 - ePub oturum sonunda TEE tarafından silinir — geçmiş oturumlarla ilişkilendirilemez.
-- uPubHash_s her oturumda farklıdır — BTK aynı kullanıcının oturumlarını ilişkilendiremez (bkz. Bölüm 2.5).
+- Her oturumda farklı bir token çifti (h1, h2) kullanılır — BTK aynı kullanıcının oturumlarını ilişkilendiremez (bkz. Bölüm 2.5).
+- Kullanılan token çifti hem BTK hem TEE tarafından tüketildi olarak işaretlenir; tekrar kullanılamaz.
+- Token çiftleri tükendiğinde kullanıcı eDevlet'ten çevrimiçi olarak yeni paket alır.
 
 #### 5.1.4. Adli Süreç (Mahkeme Kararı ile Kimlik Tespiti)
 
@@ -329,17 +349,18 @@ Adım 1: Mahkeme, X.com'dan ilgili oturuma ait kayıtları resmi yazı ile talep
         Firma, kendi veritabanında sakladığı sifreli_token'ı F_priv ile açar,
         içindeki token_paket'i (token_hash, token_ham, btk_imza)
         mahkemeye düz metin olarak sunar.
+        token_ham içinde h2 bulunur.
 
 Adım 2: Mahkeme, token_paket'teki token_hash ve btk_imza'yı BTK'ya götürür.
         BTK, token_hash ile kendi kayıtlarında arama yapar:
           btk_kayit = lookup(token_hash)
-          // btk_kayit = {token_hash, ePub, uPubHash_s, firma_id, timestamp}
-        uPubHash_s'i mahkemeye resmi yazı ile bildirir.
+          // btk_kayit = {token_hash, h1, h2, ePub, firma_id, timestamp}
+        h1 ve h2'yi mahkemeye resmi yazı ile bildirir.
 
-Adım 3: Mahkeme, uPubHash_s ile DOĞRUDAN eDevlet'e başvurur.
+Adım 3: Mahkeme, h1 (veya h2) ile DOĞRUDAN eDevlet'e başvurur.
         BTK bu adımda aracı değildir — manipülasyon riski ortadan kalkar.
-        eDevlet, uPubHash_s'i eDev_priv ile açar, SHA3-256(uPub) değerini elde eder,
-        indeks tablosundan uPub → TC_kimlik eşlemesini bulur (bkz. Bölüm 2.5).
+        eDevlet, indeks tablosundan h1 → uPub → TC_kimlik eşlemesini bulur.
+        (eDevlet kayıt anında her token çifti için indeks oluşturmuştur, bkz. Bölüm 2.5.)
 
 Adım 4: eDevlet, TC kimliğini yalnızca mahkemeye bildirir.
 ```
@@ -495,18 +516,19 @@ GKDP şu aşamada aşağıdaki güvenilir donanım platformlarını kapsar:
 
 ### BTK Tarafından Korelasyon Koruması
 
-BTK'nın aynı kullanıcının farklı oturumlarını ilişkilendirmesi, `uPubHash_s` mekanizması ile **matematiksel olarak engellenmiştir.** Her oturumda TEE, `SHA3-256(uPub)` değerini `eDev_pub` ile şifreleyerek oturumluk bir `uPubHash_s` üretir (bkz. Bölüm 2.5). BTK `eDev_priv`'e sahip olmadığı için `uPubHash_s`'i açamaz ve aynı kullanıcıya ait farklı oturumları ayırt edemez (IND-CPA güvenli).
+BTK'nın aynı kullanıcının farklı oturumlarını ilişkilendirmesi, **çift token mekanizması** ile **matematiksel olarak engellenmiştir.** Kayıt aşamasında eDevlet her kullanıcı için N adet rastgele `(h1, h2)` çifti üretir (bkz. Bölüm 2.5). Her oturumda farklı bir çift kullanılır; BTK yalnızca `h1`'i görür. `h1` değerleri birbirinden bağımsız rastgele sayılar olduğu için BTK aynı kullanıcıya ait farklı oturumları ayırt edemez.
 
 Bu çözümün avantajları:
-- **Kör imza veya grup imza gerektirmez** — standart Kyber + AES-GCM yeterlidir.
-- **eDevlet runtime'da devrede değildir** — yalnızca kayıt anında indeks tablosu oluşturur, adli süreçte şifre çözer.
-- **Ek maliyet:** eDevlet'te kullanıcı başına bir indeks kaydı (~85 milyon satır).
+- **BTK uPub'ı hiç görmez** — eDevlet sertifikası BTK'ya iletilmez. Kullanıcının kalıcı kimliği BTK'dan tamamen gizlenir.
+- **TEE token'ı doğrular** — BTK'dan dönen token'daki `h2` değerini kendi kaydıyla karşılaştırarak BTK'nın doğru çifti işlediğini teyit eder. BTK sahte token üretemez.
+- **eDevlet runtime'da devrede değildir** — yalnızca kayıt anında token çiftlerini üretir, adli süreçte indeks sorgular.
+- **Ek maliyet:** eDevlet'te kullanıcı başına N indeks kaydı (~85 milyon × N). TEE'de N token (~2 MB).
 
 ### Forward Secrecy
 Sarı seviyede her işlem bağımsız bir ephemeral anahtar çifti kullanır. Geçmiş oturumlar geriye dönük olarak çözülemez. Yeşil seviyede ePub her oturumda yenilenir ve oturum sonunda silinir; işlem içeriği olmadığından forward secrecy gerekmez.
 
 ### Kimlik Bağlantısızlığı (Unlinkability)
-TC kimliği hiçbir zaman platforma veya BTK'ya iletilmez. Her oturumda yeni ePub ve yeni `uPubHash_s` üretilir — BTK aynı kullanıcının farklı oturumlarını ne ePub ne de `uPubHash_s` üzerinden ayırt edemez (bkz. Bölüm 2.5). Platformlar kullanıcı oturumlarını bağlayamaz.
+TC kimliği hiçbir zaman platforma veya BTK'ya iletilmez. Her oturumda yeni ePub ve yeni `(h1, h2)` çifti kullanılır — BTK aynı kullanıcının farklı oturumlarını ne ePub ne de h1/h2 üzerinden ayırt edemez (bkz. Bölüm 2.5). Platformlar kullanıcı oturumlarını bağlayamaz.
 
 ### Kuantum Direnci
 Tüm imzalama işlemleri kafes tabanlı Dilithium3, tüm anahtar kapsülleme işlemleri kafes tabanlı Kyber-768 kullanır. AES-256-GCM klasik tehditlere karşı güvenlidir ve Grover algoritması ile 2^128 güvenlik seviyesi sağlar. RSA/ECDH tabanlı sistemlere karşı Shor algoritmasıyla gerçekleştirilebilecek kuantum saldırıları bu protokole uygulanamaz.
@@ -530,8 +552,8 @@ BTK token kayıtlarını, eDevlet ise günlük Merkle kök hash'lerini bağıms�
 | Tehdit | Etki | Protokol Yanıtı |
 |---|---|---|
 | Platform ihlali | Saldırgan platform veritabanını ele geçirir | TC kimliği platformda yoktur — sadece ePub ve şifreli token vardır |
-| BTK ihlali | BTK altyapısı tehlikeye girer | BTK'da TC kimliği ve uPub bulunmaz. Saldırgan yalnızca şifreli uPubHash_s ve ePub listelerini ele geçirebilir — bu veriler kullanıcı kimliğini açığa çıkarmaz ve korelasyon yapılamaz |
-| BTK korelasyonu | BTK, kullanıcı oturumlarını ilişkilendirmeye çalışabilir | `uPubHash_s` her oturumda farklıdır, BTK açamaz — korelasyon matematiksel olarak imkansız (bkz. Bölüm 2.5, Bölüm 8) |
+| BTK ihlali | BTK altyapısı tehlikeye girer | BTK'da TC kimliği ve uPub bulunmaz. Saldırgan yalnızca rastgele h1/h2 çiftleri ve ePub listelerini ele geçirebilir — bu veriler kullanıcı kimliğini açığa çıkarmaz ve korelasyon yapılamaz |
+| BTK korelasyonu | BTK, kullanıcı oturumlarını ilişkilendirmeye çalışabilir | Her oturumda farklı rastgele h1 kullanılır, BTK uPub'ı hiç görmez — korelasyon matematiksel olarak imkansız (bkz. Bölüm 2.5, Bölüm 8) |
 | Token çalınması | Başka platformda kullanılmaya çalışılır | firma_id eşleşmediği ve F_priv olmadığı için açılamaz |
 | uPriv çalınması | Saldırgan kullanıcı adına işlem yapabilir | CRL ile iptal, yeni kayıt |
 | Yetkisiz firma talebi | Platform TC kimliği talep eder | BTK firma_istegi kontrolü ile reddeder |
@@ -539,8 +561,9 @@ BTK token kayıtlarını, eDevlet ise günlük Merkle kök hash'lerini bağıms�
 | Oturum korelasyonu | Aynı kullanıcının farklı oturumları izlenir | ePub her oturumda yenilenir; platformlar oturumları bağlayamaz |
 | Kuantum saldırısı | Gelecekte kuantum bilgisayar ile şifre çözme | Dilithium3 + Kyber-768 + AES-256-GCM kuantum dirençlidir |
 | eDevlet kesintisi | Runtime işlemler durur | eDevlet runtime'da devrede değildir — etki yok |
-| BTK kayıt manipülasyonu | BTK token kayıtlarını değiştirir | eDevlet'teki Merkle kök hash'i ile çapraz doğrulama yapılır |
+| BTK kayıt manipülasyonu | BTK token kayıtlarını değiştirir | TEE token'daki h2'yi doğrular; firma kendi token kopyasını saklar — çapraz doğrulama mümkündür |
 | Firma token silme | Firma adli süreçte token'ı gösteremez | BTK kendi token_hash kaydını tutar — firmadan bağımsız kanıt mevcuttur |
+| Token çifti tüketme | Saldırgan kullanıcının token'larını tüketir | Token'lar TEE içinde saklanır; TEE olmadan tüketilemez. Tükenme durumunda eDevlet'ten yenisi alınır |
 
 ---
 
