@@ -83,7 +83,7 @@ Her çift (n = 1..N) için:
 - **cert_n:** eDevlet'in `h1_n || h2_n` üzerindeki imzası. BTK, çiftin eDevlet onaylı olduğunu bu imzadan doğrular.
 - **h1_n:** BTK'nın gördüğü tanımlayıcı. Her oturumda farklıdır — korelasyon imkansızdır.
 - **h2_n:** Firmaya token içinde iletilen tanımlayıcı. Firma için anlamsızdır; TEE, BTK'nın doğru çifti işlediğini h2 üzerinden doğrular.
-- **eDevlet indeks tablosu:** Kayıt aşamasında oluşturulur: `h1_n → uPub → TC_kimlik` ve `h2_n → uPub → TC_kimlik` (N kayıt/kullanıcı). Runtime'da sorgulanmaz.
+- **eDevlet indeks tablosu:** Kayıt aşamasında her kullanıcı için bir `user_seed = HMAC-SHA3(K_eDev, uPub)` saklanır. Token çiftleri bu seed'den deterministik türetilir — her token için ayrı indeks kaydı gerekmez. Adli süreçte eDevlet, verilen h1 değerini tüm kullanıcı seed'lerine karşı tarar (~85M HMAC, ~2 saniye). Runtime'da sorgulanmaz.
 - **Tükenme:** Tokenlar bittiğinde kullanıcı çevrimiçi olarak eDevlet'ten yeni paket alır. 1000 token ≈ 1-3 yıllık kullanım.
 
 ### 2.6 Firma Anahtar Çifti (Platform)
@@ -139,7 +139,13 @@ Kullanıcı sisteme ilk kez dahil olurken gerçekleşir. eDevlet yalnızca bu a�
      cert_n = Dilithium3.Sign(eDev_priv, h1_n || h2_n)
      BTK_token_n = HybridEncrypt(BTK_pub, {h1_n, h2_n, cert_n})
      Kullanici_token_n = {h1_n, h2_n, cert_n}
-   eDevlet indekse ekler: h1_n → uPub → TC_kimlik (adli süreç için)
+   // eDevlet, token çiftlerini HMAC ile deterministik türetir:
+   //   user_seed = HMAC-SHA3(K_eDev, uPub)
+   //   h1_n = HMAC-SHA3(user_seed, "h1" || n)
+   //   h2_n = HMAC-SHA3(user_seed, "h2" || n)
+   // Bu sayede her token çifti için ayrı indeks kaydı gerekmez.
+   // Adli süreçte: eDevlet h1'i alır, tüm kullanıcıların user_seed'lerini
+   // tarar (~85M HMAC, modern donanımda ~2 saniye). Eşleşen kullanıcı bulunur.
    TEE'ye N adet {BTK_token_n, Kullanici_token_n} yüklenir.
 ```
 
@@ -157,11 +163,11 @@ Bu protokol imzalama gereksinimini şu kurala bağlar:
 
 > **İmzalanacak bir işlem içeriği yoksa imza mekanizması gereksizdir.**
 
-| Seviye | İşlem İçeriği | ePub | Açıklama |
+| Seviye | İşlem İçeriği | Kimlik Mekanizması | Açıklama |
 |---|---|---|---|
-| Yeşil | Yok — sadece "gerçek mi?" sorusu | ✅ | ePub oturum tanımlayıcı + imza zinciri |
-| Sarı | Var — belirli bir işlem onayı | ✅ | Forward secrecy gerekli |
-| Kırmızı | Yok — doğrudan eDevlet kanalı | ❌ | BTK devre dışı |
+| Yeşil | Yok — sadece "gerçek mi?" sorusu | ePub + h1/h2 token çifti | Her oturumda yeni ePub + tek kullanımlık çift; BTK korelasyon yapamaz |
+| Sarı | Var — belirli bir işlem onayı | ePub + ephemeral imza | Forward secrecy gerekli (ileri versiyon) |
+| Kırmızı | Yok — doğrudan eDevlet kanalı | uPub + uPriv imzası | BTK devre dışı; eDevlet doğrudan doğrular |
 
 ---
 
@@ -367,8 +373,9 @@ Adım 2: Mahkeme, token_paket'teki token_hash ve btk_imza'yı BTK'ya götürür.
 
 Adım 3: Mahkeme, h1 (veya h2) ile DOĞRUDAN eDevlet'e başvurur.
         BTK bu adımda aracı değildir — manipülasyon riski ortadan kalkar.
-        eDevlet, indeks tablosundan h1 → uPub → TC_kimlik eşlemesini bulur.
-        (eDevlet kayıt anında her token çifti için indeks oluşturmuştur, bkz. Bölüm 2.5.)
+        eDevlet, HMAC taraması ile h1'in hangi kullanıcıya ait olduğunu bulur,
+        ardından uPub → TC_kimlik eşlemesini çıkarır.
+        (Deterministik türetme sayesinde her token için ayrı indeks gerekmez, bkz. Bölüm 2.5.)
 
 Adım 4: eDevlet, TC kimliğini yalnızca mahkemeye bildirir.
 ```
@@ -476,31 +483,11 @@ USB donanım anahtarı, mobil cihazı olmayan veya PC'den giriş yapmak isteyen 
 
 > **USB Anahtar Kayıt Süreci:** USB anahtarın ilk kaydı PTT şubesinde yapılır. Görevli, USB anahtarı PTT'deki okuyucuya takar, kullanıcının kimliğini doğrular ve anahtar içinde üretilen uPub'ı sisteme kaydeder. Kullanıcı daha sonra bu USB anahtarı kendi PC'sinde veya başka bir PC'de kullanabilir. Bu süreç, mobil cihazın PTT'ye götürülmesiyle aynı güvenlik seviyesini sağlar.
 
-### 7.2 Geçici Erişim Kodu (TOTP Benzeri)
+### 7.2 Geçici Erişim — Kapsam Dışı
 
-Kullanıcının ne mobil cihazının ne USB anahtarının yanında olmadığı acil durumlar için **geçici erişim kodu** mekanizması tanımlanır:
+Kullanıcının ne mobil cihazının ne USB anahtarının yanında olmadığı senaryolar GKDP kapsamı dışındadır. TEE olmayan bir ortamda kriptografik güvenlik garantisi verilemez; geçici kod, OTP veya benzer mekanizmalar BTK'nın `uPriv` türevi bir sırra erişmesini gerektireceğinden protokolün temel güvenlik varsayımlarıyla çelişir.
 
-```
-1. Kullanıcı önceden kendi TEE'li cihazında tek kullanımlık kod üretir:
-   gecici_kod = SHAKE-256(uPriv || timestamp || firma_id, 8)  // 8 haneli
-
-2. Kod özellikleri:
-   - Geçerlilik: 1 saat (yapılandırılabilir)
-   - Belirli bir firma_id'ye bağlı (örn. sadece x.com için)
-   - Tek kullanımlık (BTK ilk doğrulamada kodu tüketir)
-
-3. Arkadaşının PC'sinde:
-   Kullanıcı bu kodu girer → BTK doğrular → normal token üretir
-
-4. BTK güvencesi:
-   - Aynı kodla ikinci istek reddedilir (single-use)
-   - Süresi geçmiş kod reddedilir
-   - Firma_id eşleşmeyen kod reddedilir
-```
-
-> **Sınırlama:** Geçici erişim kodu, kullanıcının önceden hazırlamış olduğu bir kodu gerektirir. Hiçbir hazırlığı olmayan bir kullanıcı bu mekanizmadan yararlanamaz. Bu bilinçli bir güvenlik tercihidir — GKDP, "tamamen hazırlıksız anlık erişim" senaryosunu kapsamaz.
->
-> **Kullanıcı Önerisi:** Seyahat gibi durumlar için kullanıcılar, kendi TEE'li cihazlarında önceden birkaç geçici kod üretebilir, bunları yanlarında taşıyabilir (cüzdan, basılı kağıt). Her kod yalnızca bir kez ve belirli bir platform için kullanılabilir. Kod ele geçse bile firma_id bağlaması sayesinde başka platformda kullanılamaz.
+Bu durumdaki kullanıcılar için önerilen yol: USB donanım anahtarını yanında bulundurmak veya erişimi ertelemek. GKDP, "tamamen hazırlıksız anlık erişim" senaryosunu bilinçli olarak kapsam dışında bırakmaktadır. Bu kısıt, bankacılık uygulamalarının "kayıtlı cihaz" zorunluluğuyla aynı güvenlik felsefesini yansıtmaktadır.
 
 ### 7.3 Kapsam Sınırı (v0.9)
 
@@ -530,7 +517,7 @@ Bu çözümün avantajları:
 - **BTK uPub'ı hiç görmez** — eDevlet sertifikası BTK'ya iletilmez. Kullanıcının kalıcı kimliği BTK'dan tamamen gizlenir.
 - **TEE token'ı doğrular** — BTK'dan dönen token'daki `h2` değerini kendi kaydıyla karşılaştırarak BTK'nın doğru çifti işlediğini teyit eder. BTK sahte token üretemez.
 - **eDevlet runtime'da devrede değildir** — yalnızca kayıt anında token çiftlerini üretir, adli süreçte indeks sorgular.
-- **Ek maliyet:** eDevlet'te kullanıcı başına N indeks kaydı (~85 milyon × N). TEE'de N token (~2 MB).
+- **Ek maliyet:** eDevlet'te kullanıcı başına bir `user_seed` kaydı (~85 milyon, ~2.7 GB). TEE'de N token (~2 MB). Adli süreç taraması ~2 saniye.
 
 ### Forward Secrecy
 Sarı seviyede her işlem bağımsız bir ephemeral anahtar çifti kullanır. Geçmiş oturumlar geriye dönük olarak çözülemez. Yeşil seviyede ePub her oturumda yenilenir ve oturum sonunda silinir; işlem içeriği olmadığından forward secrecy gerekmez.
